@@ -1,0 +1,4 @@
+method,within_mean_f1,across_mean_f1,gap,dc_shuffle_stat,dc_shuffle_p
+HMM,0.624,0.4885,0.1354,0.0888,0.0
+equal_duration,0.5996,0.4993,0.1003,0.0013,0.2847
+HMM_minus_equal (direct perm),,,0.0351,,0.0

@@ -2,4 +2,10 @@ logs/
 slurm/
 runs/
 assets/
-data/
+data/embeddings/
+data/images/
+data/hmm_weights/2way/pca_model.pkl
+data/hmm_weights/6way/pca_model.pkl
+data/splits/*
+!data/splits/hmm_windows/
+!data/splits/hmm_windows/**
