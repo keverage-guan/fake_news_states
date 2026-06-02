@@ -27,13 +27,13 @@ Usage
   python src/characterise_states.py
 
   # Override paths:
-  python src/characterise_states.py \\
-      --decode_npz   data/hmm_hmm/6way/final_decode_k6.npz \\
-      --weights_npz  data/hmm_weights/6way/weights_pca.npz \\
-      --manifest     data/splits/hmm_windows/manifest.csv \\
-      --splits_dir   data/splits/hmm_windows \\
-      --f1_npz       data/hmm_perf/6way/k6/cross_window_f1.npz \\
-      --output_dir   data/state_characterisation \\
+  python src/characterize_states.py \
+      --decode_npz   data/hmm_hmm/6way/final_decode_k8.npz \
+      --weights_npz  data/hmm_weights/6way/weights_pca.npz \
+      --manifest     data/splits/hmm_windows/HMM_windows_manifest.csv \
+      --splits_dir   data/splits/hmm_windows \
+      --f1_npz       data/hmm_perf/6way/k8/cross_window_f1.npz \
+      --output_dir   data/state_characterisation \
       --top_subreddits 10
 """
 

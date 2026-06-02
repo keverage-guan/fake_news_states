@@ -34,10 +34,10 @@ Outputs (--output_dir)
 
 Usage
 -----
-  python src/within_across_state.py \
-      --decode_npz  data/hmm_hmm/final_decode_k6.npz \
-      --f1_npz      data/hmm_perf/k6/cross_window_f1.npz \
-      --output_dir  data/hmm_within_across/k6 \
+  python src/within_across_states.py \
+      --decode_npz  data/hmm_hmm/2way/final_decode_k2.npz \
+      --f1_npz      data/hmm_perf/2way/cross_window_f1.npz \
+      --output_dir  data/hmm_within_across/2way/k2 \
       --n_permutations 10000 \
       --seed 42
 

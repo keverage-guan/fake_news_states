@@ -43,11 +43,11 @@ Usage
 -----
   python src/check_equal_windows.py
 
-  python src/check_equal_windows.py \\
-      --decode_npz    data/hmm_hmm/6way/final_decode_k6.npz \\
-      --f1_npz        data/hmm_perf/6way/k6/cross_window_f1.npz \\
-      --output_dir    data/k6/check_equal_windows \\
-      --n_permutations 10000 \\
+  python src/check_equal_windows.py \
+      --decode_npz    data/hmm_hmm/6way/final_decode_k8.npz \
+      --f1_npz        data/hmm_perf/6way/cross_window_f1.npz \
+      --output_dir    data/k8/check_equal_windows \
+      --n_permutations 10000 \
       --seed 42
 """
 

@@ -1,3 +1,3 @@
 measure,spearman_r,p_param,p_perm,n_pairs
-JSD,-0.8318,0.0,0.0,42
-PCA_dist,-0.6821,0.0,0.0,42
+JSD,-0.824,0.0,0.0,42
+PCA_dist,-0.6757,0.0,0.0,42

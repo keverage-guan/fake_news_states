@@ -6,19 +6,19 @@ Final HMM decode at k=6 (or --k <chosen>).
 Procedure
 ---------
 1.  Load per-window, per-seed PCA vectors Z_scaled from weights_pca.npz.
-2.  Build per-seed sequences (same as the selection step).
+2.  Build per-seed sequences, then compute a single centroid sequence by
+    averaging PCA vectors across seeds at each window position.
 3.  Fit a GaussianHMM(n_components=k, covariance_type='diag') with n_inits
-    random initialisations on the concatenated Z_scaled sequences (all seeds
-    combined, with lengths passed to hmmlearn) — identical to the BIC+ARI
-    fitting pass in fit_hmm_select_states.py.  Keep the model with the
-    highest training log-likelihood.
-4.  Decode the Viterbi state sequence over the per-seed sequences, then derive
-    a single consensus window-level state by majority vote across seeds.
+    random initialisations on the centroid sequence (n_windows × D) — the
+    best-LL model is kept, identical selection criterion to the BIC+ARI pass
+    in fit_hmm_select_states.py.
+4.  Decode the Viterbi state sequence over the centroid sequence directly
+    (no per-seed decoding, no majority vote).
 5.  Save final_decode_k{k}.npz with state_seq, window_ids, log_likelihood,
     transition_matrix, means, covars.
 6.  Produce three plots:
-      state_timeline_k{k}.png  — per-seed + consensus state bars vs calendar date
-      state_strip_k{k}.png     — compact dot/step strip (consensus)
+      state_timeline_k{k}.png  — centroid state bar vs calendar date
+      state_strip_k{k}.png     — compact dot/step strip
       transition_matrix_k{k}.png — transition matrix heatmap
 
 Usage
@@ -108,6 +108,23 @@ def build_seed_sequences(Z_scaled, window_ids, seed_ids):
     return seed_seqs, ref_wins   # ref_wins: (n_windows,) sorted
 
 
+def compute_centroid_sequence(seed_seqs, seeds):
+    """
+    Average PCA vectors across seeds at each window position.
+
+    Parameters
+    ----------
+    seed_seqs : dict  seed -> (n_windows, D)
+    seeds     : list of seed keys (order does not matter)
+
+    Returns
+    -------
+    centroid : (n_windows, D) float64 — mean across seeds per window
+    """
+    stacked = np.stack([seed_seqs[s] for s in seeds], axis=0)  # (n_seeds, n_windows, D)
+    return stacked.mean(axis=0)                                  # (n_windows, D)
+
+
 # ── HMM helpers (mirrors select_states.py) ────────────────────────────────────
 
 def make_hmm(k, n_iter, random_state, covariance_type="diag"):
@@ -121,14 +138,14 @@ def make_hmm(k, n_iter, random_state, covariance_type="diag"):
     )
 
 
-def fit_best(all_seqs, k, n_inits, n_iter, covariance_type="diag"):
+def fit_best(centroid_seq, k, n_inits, n_iter, covariance_type="diag"):
     """
-    Fit n_inits HMMs on the concatenated Z_scaled sequences (all seeds).
+    Fit n_inits HMMs on the centroid sequence (n_windows × D).
     Returns the best model (highest training LL) and that LL.
     Raises RuntimeError if every init fails.
     """
-    lengths   = [s.shape[0] for s in all_seqs]
-    X         = np.concatenate(all_seqs, axis=0)
+    X       = centroid_seq                        # (n_windows, D)
+    lengths = [X.shape[0]]
     best_model = None
     best_ll    = -np.inf
     first_exc  = None
@@ -155,41 +172,22 @@ def fit_best(all_seqs, k, n_inits, n_iter, covariance_type="diag"):
     return best_model, best_ll
 
 
-# ── Viterbi decode per seed, then majority-vote consensus ─────────────────────
+# ── Viterbi decode on centroid sequence ───────────────────────────────────────
 
-def decode_all_seeds(model, seed_seqs, seeds):
+def decode_centroid(model, centroid_seq):
     """
-    Decode each seed's sequence with Viterbi.
-    Returns:
-      per_seed_states : dict  seed -> (n_windows,) int array
-      consensus       : (n_windows,) int array  — majority vote across seeds
+    Run Viterbi on the centroid sequence.
+
+    Returns
+    -------
+    state_seq : (n_windows,) int32
     """
-    per_seed_states = {}
-    for s in seeds:
-        seq = seed_seqs[s]
-        try:
-            _, states = model.decode(seq, lengths=[seq.shape[0]], algorithm="viterbi")
-            per_seed_states[s] = states.astype(np.int32)
-        except Exception as e:
-            print(f"  [warn] Viterbi failed for seed {s}: {e}")
-            per_seed_states[s] = None
-
-    # Stack valid decodings: shape (n_valid_seeds, n_windows)
-    valid = [per_seed_states[s] for s in seeds if per_seed_states[s] is not None]
-    if not valid:
-        raise RuntimeError("Viterbi decoding failed for all seeds.")
-
-    state_matrix = np.stack(valid, axis=0)   # (n_seeds, n_windows)
-
-    # Majority vote per window
-    n_windows = state_matrix.shape[1]
-    consensus = np.zeros(n_windows, dtype=np.int32)
-    for w in range(n_windows):
-        votes = state_matrix[:, w]
-        counts = np.bincount(votes)
-        consensus[w] = int(np.argmax(counts))
-
-    return per_seed_states, consensus
+    _, state_seq = model.decode(
+        centroid_seq,
+        lengths=[centroid_seq.shape[0]],
+        algorithm="viterbi",
+    )
+    return state_seq.astype(np.int32)
 
 
 # ── Window → calendar date mapping (unchanged from original) ──────────────────
@@ -247,69 +245,56 @@ def _contiguous_runs(seq):
 
 # ── Plots ─────────────────────────────────────────────────────────────────────
 
-def plot_state_timeline(consensus, per_seed_states, seeds, window_ids,
-                        start_dates, end_dates, k, out_path):
+def plot_state_timeline(state_seq, window_ids, start_dates, end_dates, k, out_path):
     """
-    One row per seed (showing per-seed Viterbi) plus a bottom consensus row.
-    Colored by state; state-boundary dashed lines from consensus sequence.
+    Single-row timeline of the centroid-derived Viterbi state sequence.
+    Colored by state; state-boundary dashed lines drawn at run transitions.
     """
-    valid_seeds = [s for s in seeds if per_seed_states[s] is not None]
-    n_rows = len(valid_seeds) + 1          # +1 for consensus row
-    n_win  = len(window_ids)
+    n_win = len(window_ids)
 
-    fig, axes = plt.subplots(n_rows, 1,
-                             figsize=(14, max(4, n_rows * 1.1)),
-                             sharex=True)
-    if n_rows == 1:
-        axes = [axes]
+    fig, ax = plt.subplots(figsize=(14, 2.2))
 
-    # Shared state-boundary positions (from consensus)
+    # Boundary positions (date-axis numeric)
     boundary_dates = []
-    for idx in np.where(np.diff(consensus) != 0)[0]:
+    for idx in np.where(np.diff(state_seq) != 0)[0]:
         boundary_dates.append(
             mdates.date2num(pd.Timestamp(end_dates[idx]).to_pydatetime())
         )
 
-    def _draw_row(ax, state_seq, title):
-        for i in range(n_win):
-            s_dt  = pd.Timestamp(start_dates[i]).to_pydatetime()
-            e_dt  = pd.Timestamp(end_dates[i]).to_pydatetime()
-            width = (e_dt - s_dt).days
-            ax.barh(y=0, width=width,
-                    left=mdates.date2num(s_dt),
-                    height=0.8,
-                    color=TAB10[state_seq[i] % 10],
-                    alpha=0.85, linewidth=0)
-        for bd in boundary_dates:
-            ax.axvline(bd, color="black", linewidth=1.2,
-                       linestyle="--", alpha=0.7, zorder=5)
-        ax.set_yticks([0])
-        ax.set_yticklabels([title], fontsize=9)
-        ax.set_ylim(-0.6, 0.6)
-        ax.xaxis_date()
-        ax.grid(axis="x", alpha=0.25, linestyle=":")
+    for i in range(n_win):
+        s_dt  = pd.Timestamp(start_dates[i]).to_pydatetime()
+        e_dt  = pd.Timestamp(end_dates[i]).to_pydatetime()
+        width = (e_dt - s_dt).days
+        ax.barh(y=0, width=width,
+                left=mdates.date2num(s_dt),
+                height=0.8,
+                color=TAB10[state_seq[i] % 10],
+                alpha=0.85, linewidth=0)
 
-    for ax, s in zip(axes[:-1], valid_seeds):
-        _draw_row(ax, per_seed_states[s], f"seed {s}")
+    for bd in boundary_dates:
+        ax.axvline(bd, color="black", linewidth=1.2,
+                   linestyle="--", alpha=0.7, zorder=5)
 
-    _draw_row(axes[-1], consensus, "consensus")
-    axes[-1].set_facecolor("#F0F4FF")   # highlight consensus row
-
-    # Shared x-axis formatting
-    axes[-1].xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
-    axes[-1].xaxis.set_major_locator(mdates.MonthLocator(interval=6))
+    ax.set_yticks([0])
+    ax.set_yticklabels(["centroid"], fontsize=9)
+    ax.set_ylim(-0.6, 0.6)
+    ax.xaxis_date()
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
+    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=6))
+    ax.grid(axis="x", alpha=0.25, linestyle=":")
     fig.autofmt_xdate(rotation=30, ha="right")
-    axes[-1].set_xlabel("Date", fontsize=11)
+    ax.set_xlabel("Date", fontsize=11)
 
-    # Legend (attached to top axes)
     patches = [mpatches.Patch(color=TAB10[s % 10], label=f"State {s}")
                for s in range(k)]
-    axes[0].legend(handles=patches, loc="upper right", fontsize=8,
-                   framealpha=0.9, title="HMM State", title_fontsize=8,
-                   ncol=min(k, 5))
+    ax.legend(handles=patches, loc="upper right", fontsize=8,
+              framealpha=0.9, title="HMM State", title_fontsize=8,
+              ncol=min(k, 5))
 
-    fig.suptitle(f"HMM State Timeline  (k={k}, Viterbi decoding per seed + consensus)",
-                 fontsize=12, y=1.01)
+    fig.suptitle(
+        f"HMM State Timeline  (k={k}, Viterbi on seed-centroid sequence)",
+        fontsize=12, y=1.02,
+    )
     plt.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -341,7 +326,7 @@ def plot_state_summary_strip(state_seq, window_ids, mid_dates, k, out_path):
     ax.set_yticklabels([f"State {i}" for i in range(k)], fontsize=9)
     ax.set_ylabel("HMM State", fontsize=11)
     ax.set_xlabel("Window (chronological)", fontsize=11)
-    ax.set_title(f"Viterbi State Sequence — consensus  (k={k})", fontsize=12)
+    ax.set_title(f"Viterbi State Sequence — seed centroid  (k={k})", fontsize=12)
     ax.grid(axis="x", alpha=0.3, linestyle=":")
     ax.set_xlim(-0.5, len(window_ids) - 0.5)
     ax.set_ylim(-0.5, k - 0.5)
@@ -393,47 +378,40 @@ def main(args):
     print(f"  src/fit_hmm_decode.py  —  k={args.k}, n_inits={args.n_inits}")
     print("=" * 60)
 
-    # ── 1. Load Z_scaled (same as selection step) ─────────────────────────────
+    # ── 1. Load Z_scaled and build centroid sequence ──────────────────────────
     print(f"\n[1] Loading Z_scaled from: {args.input_npz}")
     C, Z_scaled, window_ids, seed_ids = load_data(args.input_npz)
     seed_seqs, sorted_window_ids = build_seed_sequences(Z_scaled, window_ids, seed_ids)
-    seeds    = sorted(seed_seqs.keys())
-    all_seqs = [seed_seqs[s] for s in seeds]
+    seeds = sorted(seed_seqs.keys())
 
     n_windows = seed_seqs[seeds[0]].shape[0]
     D         = seed_seqs[seeds[0]].shape[1]
     n_seeds   = len(seeds)
 
-    print(f"    Z_scaled shape : {Z_scaled.shape}  (obs × PCA dims)")
-    print(f"    Seeds          : {seeds}  ({n_seeds} total)")
-    print(f"    Windows / seed : {n_windows}")
-    print(f"    PCA dims (D)   : {D}")
-    print(f"    Fitting on     : {sum(s.shape[0] for s in all_seqs)} total observations "
-          f"({n_seeds} seeds × {n_windows} windows)")
+    centroid_seq = compute_centroid_sequence(seed_seqs, seeds)  # (n_windows, D)
 
-    # ── 2. Fit HMM (best of n_inits on concatenated Z_scaled) ────────────────
+    print(f"    Z_scaled shape   : {Z_scaled.shape}  (obs × PCA dims)")
+    print(f"    Seeds            : {seeds}  ({n_seeds} total)")
+    print(f"    Windows          : {n_windows}")
+    print(f"    PCA dims (D)     : {D}")
+    print(f"    Centroid shape   : {centroid_seq.shape}  (mean across {n_seeds} seeds)")
+
+    # ── 2. Fit HMM on centroid sequence ───────────────────────────────────────
     print(f"\n[2] Fitting GaussianHMM(k={args.k}, cov={args.covariance_type}) "
-          f"with {args.n_inits} random inits on Z_scaled …")
+          f"with {args.n_inits} random inits on centroid sequence …")
     t_fit = time.time()
     best_model, best_ll = fit_best(
-        all_seqs, args.k, args.n_inits, args.n_iter, args.covariance_type,
+        centroid_seq, args.k, args.n_inits, args.n_iter, args.covariance_type,
     )
     print(f"    Best log-likelihood : {best_ll:.4f}  (wall: {elapsed(t_fit)})")
 
-    # ── 3. Viterbi decode per seed → consensus ────────────────────────────────
-    print(f"\n[3] Viterbi decoding per seed …")
-    per_seed_states, consensus = decode_all_seeds(best_model, seed_seqs, seeds)
+    # ── 3. Viterbi decode on centroid sequence ────────────────────────────────
+    print(f"\n[3] Viterbi decoding on centroid sequence …")
+    state_seq = decode_centroid(best_model, centroid_seq)
+    print(f"    state_seq : {state_seq.tolist()}")
 
-    for s in seeds:
-        st = per_seed_states[s]
-        if st is None:
-            print(f"    seed {s}: FAILED")
-        else:
-            print(f"    seed {s}: {st.tolist()}")
-    print(f"    consensus        : {consensus.tolist()}")
-
-    runs = _contiguous_runs(consensus)
-    print(f"\n    Consensus run-length encoded ({len(runs)} runs):")
+    runs = _contiguous_runs(state_seq)
+    print(f"\n    Run-length encoded ({len(runs)} runs):")
     for state, i0, i1 in runs:
         print(f"      State {state}  windows "
               f"{sorted_window_ids[i0]:03d}–{sorted_window_ids[i1]:03d}  "
@@ -452,16 +430,10 @@ def main(args):
 
     # ── 5. Save .npz and pickle ───────────────────────────────────────────────
     out_npz = os.path.join(args.output_dir, f"final_decode_k{args.k}.npz")
-
-    # Build per-seed state matrix for downstream use: (n_seeds, n_windows)
-    valid_seeds  = [s for s in seeds if per_seed_states[s] is not None]
-    state_matrix = np.stack([per_seed_states[s] for s in valid_seeds], axis=0)
-
     np.savez(
         out_npz,
-        state_seq         = consensus,           # (n_windows,) consensus
-        state_matrix      = state_matrix,         # (n_valid_seeds, n_windows)
-        seed_ids_decoded  = np.array(valid_seeds),
+        state_seq         = state_seq,            # (n_windows,)
+        centroid_seq      = centroid_seq,          # (n_windows, D)
         window_ids        = sorted_window_ids,
         log_likelihood    = np.float64(best_ll),
         transition_matrix = trans_matrix,
@@ -487,13 +459,12 @@ def main(args):
     print(f"\n[5] Generating plots …")
 
     plot_state_timeline(
-        consensus, per_seed_states, seeds, sorted_window_ids,
-        start_dates, end_dates,
+        state_seq, sorted_window_ids, start_dates, end_dates,
         k        = args.k,
         out_path = os.path.join(args.output_dir, f"state_timeline_k{args.k}.png"),
     )
     plot_state_summary_strip(
-        consensus, sorted_window_ids, mid_dates,
+        state_seq, sorted_window_ids, mid_dates,
         k        = args.k,
         out_path = os.path.join(args.output_dir, f"state_strip_k{args.k}.png"),
     )
@@ -509,12 +480,12 @@ def main(args):
     print(f"{'=' * 60}")
     print(f"  Log-likelihood  : {best_ll:.4f}")
     print(f"  n_windows       : {n_windows}")
-    print(f"  n_seeds         : {n_seeds}")
+    print(f"  n_seeds         : {n_seeds}  (averaged into centroid before fitting)")
     print(f"  PCA dims (D)    : {D}")
     print(f"  Covariance type : {args.covariance_type}")
-    print(f"\n  Consensus state assignments:")
+    print(f"\n  State assignments:")
     state_counts = {s: 0 for s in range(args.k)}
-    for s in consensus:
+    for s in state_seq:
         state_counts[s] += 1
     for s in range(args.k):
         n = state_counts[s]
@@ -522,7 +493,7 @@ def main(args):
         bar = "█" * n + "░" * (n_windows - n)
         print(f"    State {s}: {n:3d} windows ({pct:5.1f}%)  {bar}")
 
-    print(f"\n  Runs: {len(runs)} contiguous state segments (consensus)")
+    print(f"\n  Runs: {len(runs)} contiguous state segments")
     for state, i0, i1 in runs:
         n_run = i1 - i0 + 1
         try:
@@ -544,8 +515,8 @@ def main(args):
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="Final HMM decode at chosen k using Z_scaled sequences. "
-                    "Produces consensus state sequence via majority vote across seeds."
+        description="Final HMM decode at chosen k using seed-centroid sequence. "
+                    "Averages PCA vectors across seeds per window before fitting."
     )
     p.add_argument("--input_npz",
                    default="data/hmm_weights/weights_pca.npz",

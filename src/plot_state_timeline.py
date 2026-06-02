@@ -23,9 +23,9 @@ Usage
   python src/plot_state_timeline.py
 
   python src/plot_state_timeline.py \
-      --decode_npz  data/hmm_hmm/6way/final_decode_k7.npz \
+      --decode_npz  data/hmm_hmm/6way/final_decode_k8.npz \
       --manifest    data/splits/hmm_windows/HMM_windows_manifest.csv \
-      --output_dir  data/timeline/k7 \
+      --output_dir  data/timeline/k8 \
       --width_inches 14 \
       --dpi 300
 """
