@@ -1,6 +1,6 @@
 logs/
 slurm/
-runs/
+runs/*
 assets/
 data/embeddings/
 data/images/
