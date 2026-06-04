@@ -1,0 +1,15 @@
+experiment,run_name,num_classes,hidden_size,lr,best_val_acc,epochs_run,test_split,micro_f1,macro_f1,acc
+runs/exp1_OG_2way,OG_2way_n4096_lr0.001,2,4096,0.001,0.88833,20,OG_test,0.88639,0.88132,0.88639
+runs/exp1_OG_6way,OG_6way_n1024_lr0.0001,6,1024,0.0001,0.84985,20,OG_test,0.84931,0.73699,0.84931
+runs/exp1_temporal_2way,Temporal_2way_n16384_lr0.001,2,16384,0.001,0.8516,9,Temporal_test,0.85331,0.82042,0.85331
+runs/exp1_temporal_6way,Temporal_6way_n1024_lr0.001,6,1024,0.001,0.82465,13,Temporal_test,0.82966,0.67347,0.82966
+runs/exp2_multi_2way,Multi_2way_n4096_lr0.0001,2,4096,0.0001,0.87657,13,Multi_test1,0.86543,0.8272,0.86543
+runs/exp2_multi_2way,Multi_2way_n4096_lr0.0001,2,4096,0.0001,0.87657,13,Multi_test2,0.82354,0.77575,0.82354
+runs/exp2_multi_2way,Multi_2way_n4096_lr0.0001,2,4096,0.0001,0.87657,13,Multi_test3,0.50717,0.48309,0.50717
+runs/exp2_multi_2way,Multi_2way_n4096_lr0.0001,2,4096,0.0001,0.87657,13,Multi_test4,0.49465,0.48136,0.49465
+runs/exp2_multi_2way,Multi_2way_n4096_lr0.0001,2,4096,0.0001,0.87657,13,Multi_test5,0.41783,0.40894,0.41783
+runs/exp2_multi_6way,Multi_6way_n4096_lr0.0001,6,4096,0.0001,0.78082,20,Multi_test1,0.7358,0.68648,0.7358
+runs/exp2_multi_6way,Multi_6way_n4096_lr0.0001,6,4096,0.0001,0.78082,20,Multi_test2,0.68111,0.62715,0.68111
+runs/exp2_multi_6way,Multi_6way_n4096_lr0.0001,6,4096,0.0001,0.78082,20,Multi_test3,0.44929,0.45091,0.44929
+runs/exp2_multi_6way,Multi_6way_n4096_lr0.0001,6,4096,0.0001,0.78082,20,Multi_test4,0.45819,0.45687,0.45819
+runs/exp2_multi_6way,Multi_6way_n4096_lr0.0001,6,4096,0.0001,0.78082,20,Multi_test5,0.40237,0.42316,0.40237

@@ -1,6 +1,7 @@
 logs/
 slurm/
 runs/*
+!runs/best_per_experiment.csv
 assets/
 data/embeddings/
 data/images/
@@ -9,4 +10,3 @@ data/hmm_weights/6way/pca_model.pkl
 data/splits/*
 !data/splits/hmm_windows/
 !data/splits/hmm_windows/**
-!runs/best_per_experiments.csv
