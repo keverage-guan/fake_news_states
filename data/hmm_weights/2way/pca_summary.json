@@ -1,0 +1,20 @@
+{
+  "n_components": 12,
+  "cumulative_variance_pct": 40.6315,
+  "per_component_evr": [
+    0.042677,
+    0.038321,
+    0.038041,
+    0.037752,
+    0.037513,
+    0.037371,
+    0.037018,
+    0.036654,
+    0.03611,
+    0.035457,
+    0.017546,
+    0.011857
+  ],
+  "n_total_fitted": 350,
+  "component_selection": "broken_stick"
+}

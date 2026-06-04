@@ -93,6 +93,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
+import json
 
 import torch
 from scipy.optimize import linear_sum_assignment
@@ -776,6 +777,20 @@ def main(args):
         component_threshold      = threshold,
     )
     print(f"  weights_pca.npz  → {npz_path}")
+
+    # After the np.savez call, add:
+    cum_var = float(np.sum(pca.explained_variance_ratio_))
+    pca_summary = {
+        "n_components":            n_components,
+        "cumulative_variance_pct": round(cum_var * 100, 4),
+        "per_component_evr":       [round(float(v), 6) for v in pca.explained_variance_ratio_],
+        "n_total_fitted":          len(evr_full),
+        "component_selection":     args.component_selection,
+    }
+    summary_path = os.path.join(args.output_dir, "pca_summary.json")
+    with open(summary_path, "w") as f:
+        json.dump(pca_summary, f, indent=2)
+    print(f"  pca_summary.json → {summary_path}")
 
     pca_path = os.path.join(args.output_dir, "pca_model.pkl")
     with open(pca_path, "wb") as f:
