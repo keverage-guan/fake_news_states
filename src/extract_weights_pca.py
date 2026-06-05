@@ -768,6 +768,7 @@ def main(args):
     np.savez(
         npz_path,
         Z_scaled                 = Z_after_scaled,
+        Z_before_scaled          = Z_before_scaled,          # ← add this
         C                        = C,
         window_ids               = np.array(window_ids,    dtype=np.int32),
         seed_ids                 = np.array(seed_ids,      dtype=np.int32),

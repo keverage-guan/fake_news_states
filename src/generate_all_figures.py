@@ -13,13 +13,14 @@ Covers:
     - hmm_model_selection_6way.png      — BIC / AIC / LOO-CV vs k
     - hmm_ari_stability_6way.png        — Viterbi ARI across inits vs k
     - hmm_loo_per_fold_6way.png         — per-seed LOO curves
+    - pca_sanity_before.png             — PC1/PC2 scatter of UNALIGNED weights
     - pca_sanity_after.png              — PC1/PC2 scatter after alignment
     - pca_component_selection.png       — scree + retained-component threshold
 
   Per-k  (k=7 and k=8 by default)
     - k{k}/transition_matrix.png        — HMM transition probability heatmap
-    - k{k}/state_strip.png              — compact consensus state bar
-    - k{k}/state_timeline_seeds.png     — per-seed Viterbi + consensus rows
+    - k{k}/state_strip.png              — Viterbi state sequence (scatter+step)
+    - k{k}/state_timeline_seeds.png     — Viterbi decode on centroid
     - k{k}/timeline_with_classes.png    — state bar + stacked class proportions
     - k{k}/f1_vs_distance.png           — within/across F1 vs temporal lag
     - k{k}/distance_conditioned_null.png — permutation-test null histogram
@@ -54,6 +55,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import matplotlib.lines as mlines
 import matplotlib.dates as mdates
 import matplotlib.ticker as mticker
 
@@ -72,7 +74,7 @@ CLASS_COLORS = [
     "#CC79A7", "#D55E00", "#0072B2",
 ]
 
-TAB10        = plt.cm.tab10.colors
+TAB10         = plt.cm.tab10.colors
 STATE_PALETTE = [
     "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
     "#9467bd", "#8c564b", "#17becf", "#e377c2",
@@ -144,7 +146,6 @@ def window_calendar_dates(window_ids, manifest_path):
     """
     origin = np.datetime64("2013-01-01", "D")
 
-    # Try a couple of common filename variants
     candidates = [
         manifest_path,
         manifest_path.replace("HMM_windows_manifest.csv", "manifest.csv"),
@@ -155,7 +156,6 @@ def window_calendar_dates(window_ids, manifest_path):
             continue
         mdf = pd.read_csv(mpath)
 
-        # Guess which column is the window ID
         id_col = next(
             (c for c in mdf.columns
              if "window" in c.lower() and ("id" in c.lower() or "idx" in c.lower())),
@@ -324,7 +324,6 @@ def figure_cross_window_heatmap(perf_dir, out_dir, dpi):
 def figure_model_selection(hmm_dir, out_dir, dpi):
     banner("HMM model selection")
 
-    # Try hmm_dir first, then parent (in case scores are one level up)
     scores_path = None
     for candidate in [os.path.join(hmm_dir, "hmm_scores.npz"),
                       os.path.join(os.path.dirname(hmm_dir), "hmm_scores.npz")]:
@@ -389,37 +388,35 @@ def figure_model_selection(hmm_dir, out_dir, dpi):
     # ── 3b: ARI stability ────────────────────────────────────────────────────
     ari_mean_r = np.nanmean(ari_all, axis=1)
     ari_std_r  = np.nanstd(ari_all,  axis=1)
+
     fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot(k_arr, ari_mean_r, "o-", color="#7C3AED", lw=2, ms=6, label="Mean ARI")
+    ax.plot(k_arr, ari_mean_r, "o-", color="#EA580C", lw=2, ms=6)
     ax.fill_between(k_arr, ari_mean_r - ari_std_r, ari_mean_r + ari_std_r,
-                    alpha=0.15, color="#7C3AED")
+                    alpha=0.15, color="#EA580C")
     ax.set_xlabel("k", fontsize=12)
-    ax.set_ylabel("Adjusted Rand Index", fontsize=12)
-    ax.set_title("Viterbi ARI stability across initialisations (6-way)", fontsize=12)
-    ax.set_xticks(k_arr); ax.legend(fontsize=10); ax.grid(True, alpha=0.3)
+    ax.set_ylabel("Pairwise ARI", fontsize=12)
+    ax.set_title("Viterbi decode stability across random inits (6-way)", fontsize=12)
+    ax.set_xticks(k_arr); ax.grid(True, alpha=0.3)
     fig.tight_layout()
     savefig(fig, os.path.join(out_dir, "hmm_ari_stability_6way.png"), dpi=dpi)
 
-    # ── 3c: LOO per fold ─────────────────────────────────────────────────────
-    # loo_all: (n_k, n_seeds)
-    n_folds = loo_all.shape[1]
-    fig, ax = plt.subplots(figsize=(10, 5))
-    cmap = plt.cm.tab10
-    for fold in range(n_folds):
-        fv = loo_all[:, fold]
-        ok = np.isfinite(fv)
-        ax.plot(k_arr[ok], fv[ok], "o-",
-                color=cmap(fold % 10), lw=1.5, ms=4, alpha=0.7, label=f"seed {fold}")
-    if valid.any():
-        ax.plot(k_arr[valid], loo_mean[valid], "k--", lw=2.5, label="mean")
-    ax.set_xlabel("k", fontsize=12)
-    ax.set_ylabel("Held-out LL/obs", fontsize=12)
-    ax.set_title("LOO-CV per fold (6-way)", fontsize=12)
-    ax.set_xticks(k_arr)
-    ax.legend(fontsize=8, ncol=min(n_folds + 1, 6))
-    ax.grid(True, alpha=0.3)
-    fig.tight_layout()
-    savefig(fig, os.path.join(out_dir, "hmm_loo_per_fold_6way.png"), dpi=dpi)
+    # ── 3c: LOO per-fold ─────────────────────────────────────────────────────
+    n_folds = loo_all.shape[1] if loo_all.ndim > 1 else 0
+    if n_folds > 1:
+        fig, ax = plt.subplots(figsize=(9, 5))
+        for fold in range(n_folds):
+            ax.plot(k_arr, loo_all[:, fold], "o--", lw=1, ms=4, alpha=0.6,
+                    label=f"fold {fold}")
+        ax.plot(k_arr[valid], loo_mean[valid], "o-", color="black",
+                lw=2.5, ms=6, label="mean", zorder=5)
+        ax.set_xlabel("k", fontsize=12)
+        ax.set_ylabel("Held-out LL/obs", fontsize=12)
+        ax.set_title("LOO-CV per fold (6-way)", fontsize=12)
+        ax.set_xticks(k_arr)
+        ax.legend(fontsize=8, ncol=min(n_folds, 5))
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        savefig(fig, os.path.join(out_dir, "hmm_loo_per_fold_6way.png"), dpi=dpi)
 
 
 # ── 4. PCA sanity check ───────────────────────────────────────────────────────
@@ -445,35 +442,58 @@ def figure_pca_sanity(pca_npz, out_dir, dpi):
     seed_to_idx = {s: i for i, s in enumerate(unique_seeds)}
     cmap_win = plt.cm.viridis
 
-    # ── 4a: PC1 vs PC2 scatter after alignment ────────────────────────────────
-    import matplotlib.lines as mlines
-    fig, ax = plt.subplots(figsize=(10, 7))
-    for i in range(len(window_ids)):
-        c = cmap_win(win_to_idx[window_ids[i]] / max(n_wins - 1, 1))
-        m = MARKERS[seed_to_idx[seed_ids[i]] % len(MARKERS)]
-        ax.scatter(Z_scaled[i, 0], Z_scaled[i, 1], color=c, marker=m, s=25, alpha=0.6)
-    sm = plt.cm.ScalarMappable(cmap=cmap_win, norm=plt.Normalize(0, max(n_wins - 1, 1)))
-    sm.set_array([])
-    plt.colorbar(sm, ax=ax, label="Window index")
-    ax.set_xlabel(f"PC1 ({evr[0]*100:.1f}% var)", fontsize=12)
-    ax.set_ylabel(f"PC2 ({evr[1]*100:.1f}% var)", fontsize=12)
-    ax.set_title("PCA of aligned MLP weights\n(coloured by window, marker by seed)", fontsize=12)
-    legend_els = [
-        mlines.Line2D([], [], color="grey", marker=MARKERS[seed_to_idx[s] % len(MARKERS)],
-                      linestyle="None", markersize=7, alpha=0.8, label=f"seed {s}")
-        for s in unique_seeds[:len(MARKERS)]
-    ]
-    ax.legend(handles=legend_els, title="seed", fontsize=8, loc="upper right")
-    fig.tight_layout()
-    savefig(fig, os.path.join(out_dir, "pca_sanity_after.png"), dpi=dpi)
+    def _scatter(Z, title, out_path, xlabel="PC1", ylabel="PC2"):
+        fig, ax = plt.subplots(figsize=(10, 7))
+        for i in range(len(window_ids)):
+            c = cmap_win(win_to_idx[window_ids[i]] / max(n_wins - 1, 1))
+            m = MARKERS[seed_to_idx[seed_ids[i]] % len(MARKERS)]
+            ax.scatter(Z[i, 0], Z[i, 1], color=c, marker=m, s=25, alpha=0.6)
+        sm = plt.cm.ScalarMappable(cmap=cmap_win,
+                                   norm=plt.Normalize(0, max(n_wins - 1, 1)))
+        sm.set_array([])
+        plt.colorbar(sm, ax=ax, label="Window index")
+        ax.set_xlabel(xlabel, fontsize=12)
+        ax.set_ylabel(ylabel, fontsize=12)
+        ax.set_title(title, fontsize=12)
+        legend_els = [
+            mlines.Line2D([], [], color="grey",
+                          marker=MARKERS[seed_to_idx[s] % len(MARKERS)],
+                          linestyle="None", markersize=7, alpha=0.8, label=f"seed {s}")
+            for s in unique_seeds[:len(MARKERS)]
+        ]
+        ax.legend(handles=legend_els, title="seed", fontsize=8, loc="upper right")
+        fig.tight_layout()
+        savefig(fig, out_path, dpi=dpi)
 
-    # ── 4b: Component selection scree (per-component EVR + broken stick, first 100) ──
+    # ── 4a: PC1 vs PC2 scatter BEFORE alignment ───────────────────────────────
+    if "Z_before_scaled" in d:
+        Z_before = d["Z_before_scaled"].astype(np.float32)
+        _scatter(
+            Z_before,
+            title="PCA of UNALIGNED MLP weights\n"
+                  "(coloured by window, marker by seed — seed clustering expected)",
+            out_path=os.path.join(out_dir, "pca_sanity_before.png"),
+            xlabel="PC1 (unaligned)",
+            ylabel="PC2 (unaligned)",
+        )
+    else:
+        print("    [skip] pca_sanity_before — Z_before_scaled not in weights_pca.npz "
+              "(re-run extract_weights_pca.py to populate it)")
+
+    # ── 4b: PC1 vs PC2 scatter AFTER alignment ────────────────────────────────
+    _scatter(
+        Z_scaled,
+        title="PCA of aligned MLP weights\n(coloured by window, marker by seed)",
+        out_path=os.path.join(out_dir, "pca_sanity_after.png"),
+        xlabel=f"PC1 ({evr[0]*100:.1f}% var)",
+        ylabel=f"PC2 ({evr[1]*100:.1f}% var)",
+    )
+
+    # ── 4c: Component selection scree ────────────────────────────────────────
     n_full = len(evr_full)
     n_show = min(100, n_full)
     xs     = np.arange(1, n_show + 1)
 
-    # Broken-stick expectation for component k (1-indexed) with n_full total:
-    #   b_k = (1/n_full) * sum_{j=k}^{n_full} (1/j)
     broken_stick = np.array(
         [(1 / n_full) * sum(1 / j for j in range(i, n_full + 1))
          for i in range(1, n_show + 1)]
@@ -488,7 +508,8 @@ def figure_pca_sanity(pca_npz, out_dir, dpi):
                label=f"Retained: {len(evr)} components (threshold={threshold:.3f})")
     ax.set_xlabel("Principal component", fontsize=12)
     ax.set_ylabel("Explained variance ratio", fontsize=12)
-    ax.set_title(f"PCA component selection (first {n_show} of {n_full} PCs shown)", fontsize=12)
+    ax.set_title(f"PCA component selection (first {n_show} of {n_full} PCs shown)",
+                 fontsize=12)
     ax.legend(fontsize=10); ax.grid(True, alpha=0.3)
     fig.tight_layout()
     savefig(fig, os.path.join(out_dir, "pca_component_selection.png"), dpi=dpi)
@@ -505,7 +526,8 @@ def _transition_matrix(trans_mat, k, out_path, dpi):
     labels = [f"State {s}" for s in range(k)]
     ax.set_xticks(range(k)); ax.set_xticklabels(labels, fontsize=10)
     ax.set_yticks(range(k)); ax.set_yticklabels(labels, fontsize=10)
-    ax.set_xlabel("To state", fontsize=11); ax.set_ylabel("From state", fontsize=11)
+    ax.set_xlabel("To state", fontsize=11)
+    ax.set_ylabel("From state", fontsize=11)
     ax.set_title(f"HMM Transition Matrix (k={k}, 6-way)", fontsize=12)
     for i in range(k):
         for j in range(k):
@@ -515,45 +537,71 @@ def _transition_matrix(trans_mat, k, out_path, dpi):
     savefig(fig, out_path, dpi=dpi)
 
 
-def _state_strip(consensus, start_dates, end_dates, k, out_path, dpi):
-    n_win = len(consensus)
-    runs  = contiguous_runs(consensus)
+def _state_strip(state_seq, start_dates, end_dates, k, out_path, dpi):
+    # ── Relabel states in order of first chronological appearance ────────────
+    relabel = {}
+    next_id = 0
+    for s in state_seq:
+        if s not in relabel:
+            relabel[s] = next_id
+            next_id += 1
+    state_seq = np.array([relabel[s] for s in state_seq])
+    k_plot    = next_id   # may be < k if some states never appear in the decode
 
-    fig, ax = plt.subplots(figsize=(14, 2))
-    for i in range(n_win):
-        left  = date_to_mpl(start_dates[i])
-        right = date_to_mpl(end_dates[i])
-        ax.barh(0, right - left, left=left, height=0.8,
-                color=TAB10[consensus[i] % 10], alpha=0.9, linewidth=0)
+    n_win     = len(state_seq)
+    x_vals    = np.arange(n_win)
+    colors    = [TAB10[s % 10] for s in state_seq]
+    mid_dates = [s + (e - s) / 2 for s, e in zip(start_dates, end_dates)]
 
-    for state, i0, i1 in runs:
-        mid = (date_to_mpl(start_dates[i0]) + date_to_mpl(end_dates[i1])) / 2
-        ax.text(mid, 0, str(state), ha="center", va="center",
-                fontsize=9, fontweight="bold", color="white")
+    fig, ax = plt.subplots(figsize=(14, 3))
 
-    ax.set_ylim(-0.5, 0.5); ax.set_yticks([])
-    ax.xaxis_date()
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
-    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=6))
-    fig.autofmt_xdate(rotation=30, ha="right")
+    ax.scatter(x_vals, state_seq, c=colors, s=80, zorder=3,
+               edgecolors="white", linewidths=0.5)
+    ax.step(x_vals, state_seq, where="mid",
+            color="gray", linewidth=0.8, alpha=0.6, zorder=2)
+
+    for idx in np.where(np.diff(state_seq) != 0)[0]:
+        ax.axvline(idx + 0.5, color="black", linewidth=1.2,
+                   linestyle="--", alpha=0.6)
+
+    tick_step = max(1, n_win // 8)
+    tick_idxs = list(range(0, n_win, tick_step))
+    ax.set_xticks(tick_idxs)
+    ax.set_xticklabels(
+        [pd.Timestamp(mid_dates[i]).strftime("%b %Y") for i in tick_idxs],
+        rotation=30, ha="right", fontsize=8,
+    )
+    ax.set_yticks(range(k_plot))
+    ax.set_yticklabels([f"State {i}" for i in range(k_plot)], fontsize=9)
+    ax.set_ylabel("HMM State", fontsize=11)
+    ax.set_xlabel("Window (chronological)", fontsize=11)
+    ax.set_title(f"Viterbi State Sequence — seed centroid  (k={k}, 6-way)", fontsize=12)
+    ax.grid(axis="x", alpha=0.3, linestyle=":")
+    ax.set_xlim(-0.5, n_win - 0.5)
+    ax.set_ylim(-0.5, k_plot - 0.5)
+
     legend_patches = [mpatches.Patch(color=TAB10[s % 10], label=f"State {s}")
-                      for s in range(k)]
-    ax.legend(handles=legend_patches, loc="upper right", fontsize=8, ncol=k)
-    ax.set_title(f"HMM Consensus State Strip (k={k}, 6-way)", fontsize=11)
+                      for s in range(k_plot)]
+    ax.legend(handles=legend_patches, loc="upper left", fontsize=8, ncol=k_plot,
+              framealpha=0.85)
     fig.tight_layout()
     savefig(fig, out_path, dpi=dpi)
 
 
 def _state_timeline_seeds(dec, start_dates, end_dates, k, out_path, dpi):
-    consensus    = dec["state_seq"].astype(int)
+    state_seq    = dec["state_seq"].astype(int)
     state_matrix = dec["state_matrix"] if "state_matrix" in dec else None
     seeds_dec    = dec["seed_ids_decoded"].tolist() if "seed_ids_decoded" in dec else []
-    n_win        = len(consensus)
+    n_win        = len(state_seq)
 
     per_seed = {}
     if state_matrix is not None:
         for idx, s in enumerate(seeds_dec):
             per_seed[s] = state_matrix[idx]
+
+    if not per_seed:
+        print(f"    [info] state_timeline_seeds: no per-seed decode data in npz "
+              f"(state_matrix/seed_ids_decoded absent) — showing centroid decode only")
 
     valid_seeds = list(per_seed.keys())
     n_rows      = len(valid_seeds) + 1
@@ -564,7 +612,7 @@ def _state_timeline_seeds(dec, start_dates, end_dates, k, out_path, dpi):
         axes = [axes]
 
     boundary_nums = []
-    for idx in np.where(np.diff(consensus) != 0)[0]:
+    for idx in np.where(np.diff(state_seq) != 0)[0]:
         boundary_nums.append(date_to_mpl(end_dates[idx]))
 
     def draw_row(ax, seq, title):
@@ -581,7 +629,7 @@ def _state_timeline_seeds(dec, start_dates, end_dates, k, out_path, dpi):
 
     for ax, s in zip(axes[:-1], valid_seeds):
         draw_row(ax, per_seed[s], f"seed {s}")
-    draw_row(axes[-1], consensus, "consensus")
+    draw_row(axes[-1], state_seq, "Viterbi (centroid)")
     axes[-1].set_facecolor("#F0F4FF")
     axes[-1].xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
     axes[-1].xaxis.set_major_locator(mdates.MonthLocator(interval=6))
@@ -590,14 +638,15 @@ def _state_timeline_seeds(dec, start_dates, end_dates, k, out_path, dpi):
     legend_patches = [mpatches.Patch(color=TAB10[s % 10], label=f"State {s}")
                       for s in range(k)]
     axes[0].legend(handles=legend_patches, loc="upper right", fontsize=8, ncol=k)
-    fig.suptitle(f"HMM State Timeline — Per-seed + Consensus (k={k}, 6-way)", fontsize=12)
+    fig.suptitle(f"HMM State Timeline — Viterbi on per-window centroids (k={k}, 6-way)",
+                 fontsize=12)
     fig.tight_layout()
     savefig(fig, out_path, dpi=dpi)
 
 
 def _timeline_with_classes(dec, manifest_path, k, out_path, dpi):
     """State colour bar (top) + stacked 6-way class proportions (bottom)."""
-    consensus  = dec["state_seq"].astype(int)
+    state_seq  = dec["state_seq"].astype(int)
     window_ids = dec["window_ids"].astype(int)
     CLS_COLS   = [f"cls_{i}" for i in range(6)]
 
@@ -662,7 +711,7 @@ def _timeline_with_classes(dec, manifest_path, k, out_path, dpi):
         gridspec_kw={"height_ratios": [1, 3]})
 
     # Top: state colour bar with run labels
-    runs = contiguous_runs(consensus)
+    runs = contiguous_runs(state_seq)
     for state, i0, i1 in runs:
         left  = date_to_mpl(starts_dt[i0])
         right = date_to_mpl(ends_dt[i1])
@@ -674,7 +723,7 @@ def _timeline_with_classes(dec, manifest_path, k, out_path, dpi):
 
     # State boundary lines on both panels
     boundary_nums = []
-    for idx in np.where(np.diff(consensus) != 0)[0]:
+    for idx in np.where(np.diff(state_seq) != 0)[0]:
         boundary_nums.append(date_to_mpl(ends_dt[idx]))
     for bn in boundary_nums:
         ax_top.axvline(bn, color="black", lw=1.0, ls="--", alpha=0.7)
@@ -749,9 +798,9 @@ def _distance_conditioned_null(null_npz_path, out_path, dpi):
     savefig(fig, out_path, dpi=dpi)
 
 
-def _statepair_heatmap(f1_matrix, valid_ids_f1, consensus, window_ids_dec,
+def _statepair_heatmap(f1_matrix, valid_ids_f1, state_seq, window_ids_dec,
                        k, out_path, dpi):
-    wid_to_state = dict(zip(window_ids_dec, consensus))
+    wid_to_state = dict(zip(window_ids_dec, state_seq))
     valid_arr    = np.array(valid_ids_f1)
 
     sp_mat = np.full((k, k), np.nan)
@@ -781,7 +830,7 @@ def _statepair_heatmap(f1_matrix, valid_ids_f1, consensus, window_ids_dec,
             if not np.isnan(v):
                 ax.text(sj, si, f"{v:.3f}", ha="center", va="center",
                         fontsize=9, color="black" if 0.3 < v < 0.85 else "white")
-    for s in range(k):   # outline diagonal
+    for s in range(k):
         rect = mpatches.FancyBboxPatch((s - 0.5, s - 0.5), 1, 1,
                                        boxstyle="square,pad=0", lw=2.5,
                                        edgecolor="navy", facecolor="none")
@@ -790,11 +839,11 @@ def _statepair_heatmap(f1_matrix, valid_ids_f1, consensus, window_ids_dec,
     savefig(fig, out_path, dpi=dpi)
 
 
-def _f1_heatmap_with_states(f1_matrix, valid_ids_f1, consensus, window_ids_dec,
+def _f1_heatmap_with_states(f1_matrix, valid_ids_f1, state_seq, window_ids_dec,
                              k, out_path, dpi):
     """Full F1 heatmap in natural window order, with state-colour strips on the margins."""
-    wid_to_state = dict(zip(window_ids_dec, consensus))
-    valid_arr    = np.array(valid_ids_f1)   # already in window order from the npz
+    wid_to_state = dict(zip(window_ids_dec, state_seq))
+    valid_arr    = np.array(valid_ids_f1)
     states_for_v = np.array([wid_to_state.get(w, -1) for w in valid_arr])
     n = len(valid_arr)
 
@@ -806,7 +855,6 @@ def _f1_heatmap_with_states(f1_matrix, valid_ids_f1, consensus, window_ids_dec,
                    vmin=np.nanmin(plot_mat), vmax=np.nanmax(plot_mat))
     plt.colorbar(im, ax=ax, label="Macro F1")
 
-    # State-colour strip along the top and left margins
     for i, (wid, s) in enumerate(zip(valid_arr, states_for_v)):
         if s < 0:
             continue
@@ -816,12 +864,10 @@ def _f1_heatmap_with_states(f1_matrix, valid_ids_f1, consensus, window_ids_dec,
         ax.axhspan(i - 0.5, i + 0.5, xmin=-0.025, xmax=0.0,
                    color=c, alpha=0.9, clip_on=False)
 
-    # Grid lines at every state transition (in natural window order)
     for i in np.where(np.diff(states_for_v) != 0)[0]:
         ax.axvline(i + 0.5, color="black", lw=1.2, ls="--", alpha=0.6)
         ax.axhline(i + 0.5, color="black", lw=1.2, ls="--", alpha=0.6)
 
-    # State legend
     legend_patches = [mpatches.Patch(color=TAB10[s % 10], label=f"State {s}")
                       for s in range(k)]
     ax.legend(handles=legend_patches, title="HMM state", fontsize=8,
@@ -835,7 +881,8 @@ def _f1_heatmap_with_states(f1_matrix, valid_ids_f1, consensus, window_ids_dec,
     ax.set_yticklabels([f"W{valid_arr[t]:03d}" for t in ticks], fontsize=6)
     ax.set_xlabel("Test window", fontsize=11)
     ax.set_ylabel("Train window", fontsize=11)
-    ax.set_title(f"Cross-window macro F1 — annotated by HMM state (k={k}, 6-way)", fontsize=12)
+    ax.set_title(f"Cross-window macro F1 — annotated by HMM state (k={k}, 6-way)",
+                 fontsize=12)
     fig.tight_layout()
     savefig(fig, out_path, dpi=dpi)
 
@@ -855,7 +902,7 @@ def run_per_k(k, hmm_dir, perf_dir, wa_dir, manifest_path, out_dir, dpi):
         print(f"  [skip] all k={k} figures — decode file missing")
         return
 
-    consensus  = dec["state_seq"].astype(int)
+    state_seq  = dec["state_seq"].astype(int)
     window_ids = dec["window_ids"].astype(int)
     trans_mat  = dec["transition_matrix"]
 
@@ -864,7 +911,7 @@ def run_per_k(k, hmm_dir, perf_dir, wa_dir, manifest_path, out_dir, dpi):
     _transition_matrix(trans_mat, k,
                        os.path.join(k_out, "transition_matrix.png"), dpi)
 
-    _state_strip(consensus, start_dates, end_dates, k,
+    _state_strip(state_seq, start_dates, end_dates, k,
                  os.path.join(k_out, "state_strip.png"), dpi)
 
     _state_timeline_seeds(dec, start_dates, end_dates, k,
@@ -894,10 +941,10 @@ def run_per_k(k, hmm_dir, perf_dir, wa_dir, manifest_path, out_dir, dpi):
         valid_ids_f1 = f1d["valid_ids"].tolist()
         wids_list    = window_ids.tolist()
 
-        _statepair_heatmap(f1_matrix, valid_ids_f1, consensus, wids_list, k,
+        _statepair_heatmap(f1_matrix, valid_ids_f1, state_seq, wids_list, k,
                            os.path.join(k_out, "statepair_heatmap.png"), dpi)
 
-        _f1_heatmap_with_states(f1_matrix, valid_ids_f1, consensus, wids_list, k,
+        _f1_heatmap_with_states(f1_matrix, valid_ids_f1, state_seq, wids_list, k,
                                 os.path.join(k_out, "f1_heatmap_with_states.png"), dpi)
     else:
         print("    [skip] statepair_heatmap and f1_heatmap_with_states — "
