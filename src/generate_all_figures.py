@@ -254,26 +254,36 @@ def figure_window_distributions(out_dir, dpi):
         return None
 
     data = _load()
-    if data is None or "created_dt" not in data.columns:
-        print("  [skip] window_distributions — no TSV data found")
+    if data is None:
+        print("  [skip] window_distributions — no split TSVs found")
         return
 
-    days  = 60
-    color = "#2563EB"
+    days = 60
+    origin = data["created_dt"].min().floor("D")
+    data["window_idx"] = ((data["created_dt"] - origin).dt.days // days).astype(int)
 
-    data["window_start"] = data["created_dt"].dt.floor(f"{days}D")
-    wdf = (data.groupby("window_start")
-               .size()
-               .reset_index(name="count")
-               .sort_values("window_start"))
+    wdf = (data.groupby("window_idx")
+               .agg(count=("window_idx", "size"),
+                    window_start=("created_dt", "min"))
+               .reset_index())
+    wdf["window_start"] = wdf["window_start"].dt.tz_localize(None)
 
-    wdf["actual_days"] = wdf["window_start"].diff().shift(-1).dt.days.fillna(days)
+    # Actual days in each window
+    all_idxs  = np.arange(wdf["window_idx"].min(), wdf["window_idx"].max() + 1)
+    last_date = data["created_dt"].max().tz_localize(None)
+    actual_days_list = []
+    for idx in wdf["window_idx"]:
+        win_end  = origin.tz_localize(None) + pd.Timedelta(days=(idx + 1) * days)
+        win_end  = min(win_end, last_date)
+        win_start = origin.tz_localize(None) + pd.Timedelta(days=idx * days)
+        actual_days_list.append(max(1, (win_end - win_start).days))
+    wdf["actual_days"] = actual_days_list
 
-    ts = wdf["window_start"].values
+    ts     = wdf["window_start"]
+    color  = "#3B82F6"
 
     fig, ax = plt.subplots(figsize=(14, 4))
-    ax.bar(ts, wdf["count"].values, width=pd.Timedelta(days=days - 0.9),
-           align="edge",
+    ax.bar(ts, wdf["count"], width=pd.Timedelta(days=days * 0.85),
            color=color, alpha=0.85, linewidth=0.3, edgecolor="white")
     mean_val = wdf["count"].mean()
     ax.axhline(mean_val, color="black", lw=1.0, ls="--", alpha=0.6, zorder=5)
@@ -922,7 +932,7 @@ def figure_equal_segmentation(k, eq_dir, k_out, dpi):
         p_eq      = float(eq_row["dc_shuffle_p"])
 
         fig, ax = plt.subplots(figsize=(6, 5))
-        labels = ["HMM\nsegmentation", "Equal-duration\nsegmentation"]
+        labels = ["HMM Segmentation", "Equal-Duration Segmentation"]
         gaps   = [hmm_gap, equal_gap]
         colors = [COLORS_EQ["hmm"], COLORS_EQ["equal"]]
         bars   = ax.bar(labels, gaps, color=colors, width=0.4,
@@ -934,7 +944,7 @@ def figure_equal_segmentation(k, eq_dir, k_out, dpi):
                     ha="center", va="bottom", fontsize=10)
         ax.axhline(0, color="black", linewidth=0.8, linestyle="--")
         ax.set_ylabel("Within-group F1 − Across-group F1", fontsize=11)
-        ax.set_title("Generalisation gap: HMM vs. equal-duration segmentation",
+        ax.set_title("Generalisation Gap: HMM vs. Equal-Duration Segmentation",
                      fontsize=12)
         ax.set_ylim(min(0, min(gaps)) - 0.03, max(gaps) + 0.06)
         fig.tight_layout()
@@ -951,8 +961,8 @@ def figure_equal_segmentation(k, eq_dir, k_out, dpi):
 
             fig, axes = plt.subplots(1, 2, figsize=(14, 5), sharey=True)
             for ax, s, label, color in [
-                (axes[0], strat_hmm, "HMM segmentation",           COLORS_EQ["hmm"]),
-                (axes[1], strat_eq,  "Equal-duration segmentation", COLORS_EQ["equal"]),
+                (axes[0], strat_hmm, "HMM Segmentation",           COLORS_EQ["hmm"]),
+                (axes[1], strat_eq,  "Equal-Duration Segmentation", COLORS_EQ["equal"]),
             ]:
                 has_w  = set(s.loc[s["n_within"] > 0, "distance"])
                 has_a  = set(s.loc[s["n_across"] > 0, "distance"])
@@ -970,14 +980,13 @@ def figure_equal_segmentation(k, eq_dir, k_out, dpi):
                 ax.fill_between(d, s["within_mean"].values, s["across_mean"].values,
                                 alpha=0.10, color=color)
                 ax.set_title(label, fontsize=12)
-                ax.set_xlabel("Temporal distance |i − j| (windows)", fontsize=11)
+                ax.set_xlabel("Temporal Distance |i − j| (Windows)", fontsize=11)
                 ax.set_xlim(min(common) - 0.5, max(common) + 0.5)
                 ax.legend(fontsize=10)
                 ax.grid(True, alpha=0.3, linestyle="--")
             axes[0].set_ylabel("Macro F1", fontsize=11)
             fig.suptitle(
-                "Within vs. across-group F1 by temporal lag\n"
-                "(x-axis limited to distances present in both within and across pairs)",
+                "Within- vs. Across-Group Macro F1 by Temporal Lag",
                 fontsize=12)
             fig.tight_layout()
             savefig(fig, os.path.join(k_out, "eq_f1_vs_distance_both.png"), dpi=dpi)
@@ -987,7 +996,6 @@ def figure_equal_segmentation(k, eq_dir, k_out, dpi):
         print(f"    [skip] eq_f1_vs_distance_both — {strat_path} not found")
 
     # ── 3. Direct permutation test (HMM gap − equal gap) ────────────────────
-    #       Styled to match distance_conditioned_null.png from the main analysis
     if os.path.exists(null_path):
         try:
             null_diffs   = np.load(null_path)
@@ -1000,16 +1008,16 @@ def figure_equal_segmentation(k, eq_dir, k_out, dpi):
 
             fig, ax = plt.subplots(figsize=(7, 4))
             ax.hist(null_diffs, bins=60, color="#94A3B8", edgecolor="white",
-                    linewidth=0.3, alpha=0.85, label="Null distribution\n(HMM labels permuted)")
+                    linewidth=0.3, alpha=0.85, label="Null Distribution\n(HMM Labels Permuted)")
             ax.axvline(obs_diff, color="#DC2626", lw=2.5,
-                       label=f"Observed Δgap = {obs_diff:+.4f}   (p = {p_direct:.4f})")
+                       label=f"Observed \u0394gap = {obs_diff:+.4f}   (p = {p_direct:.4f})")
             ax.axvline(pct95, color="black", lw=1.2, linestyle="--", alpha=0.7,
-                       label=f"Null 95th pct = {pct95:.4f}")
-            ax.set_xlabel("HMM pooled gap − Equal pooled gap", fontsize=12)
+                       label=f"Null 95th Percentile = {pct95:.4f}")
+            ax.set_xlabel("HMM Pooled Gap \u2212 Equal-Duration Pooled Gap", fontsize=12)
             ax.set_ylabel("Count", fontsize=12)
             ax.set_title(
-                f"Direct permutation test: HMM gap > equal-size gap\n"
-                f"(n = {len(null_diffs):,} permutations of HMM window labels)",
+                f"Direct Permutation Test: HMM vs. Equal-Duration Generalisation Gap"
+                f"  ({len(null_diffs):,} permutations)",
                 fontsize=12,
             )
             ax.legend(fontsize=10)
@@ -1035,21 +1043,21 @@ def figure_equal_segmentation(k, eq_dir, k_out, dpi):
             fig, axes = plt.subplots(2, 1, figsize=(14, 3),
                                      gridspec_kw={"hspace": 0.6})
             for ax, lbl_arr, title in [
-                (axes[0], hmm_labels,   "HMM segmentation"),
-                (axes[1], equal_labels, "Equal-duration segmentation"),
+                (axes[0], hmm_labels,   "HMM Segmentation"),
+                (axes[1], equal_labels, "Equal-Duration Segmentation"),
             ]:
                 for i, lbl in enumerate(lbl_arr):
                     ax.bar(i, 1, color=colors[lbl], edgecolor="white", linewidth=0.3)
                 ax.set_xlim(-0.5, N - 0.5)
                 ax.set_ylim(0, 1)
                 ax.set_yticks([])
-                ax.set_xlabel("Window index →", fontsize=9)
+                ax.set_xlabel("Window Index", fontsize=9)
                 ax.set_title(title, fontsize=10)
                 patches = [mpatches.Patch(color=colors[g], label=f"G{g}")
                            for g in range(n_groups)]
                 ax.legend(handles=patches, loc="upper right", fontsize=7,
                           ncol=n_groups, framealpha=0.7)
-            fig.suptitle("Segmentation comparison (each bar = one 60-day window)",
+            fig.suptitle("Window Group Assignments: HMM vs. Equal-Duration Segmentation",
                          fontsize=11)
             savefig(fig, os.path.join(k_out, "eq_segmentation_comparison.png"), dpi=dpi)
         except Exception as e:
@@ -1058,7 +1066,6 @@ def figure_equal_segmentation(k, eq_dir, k_out, dpi):
         print(f"    [skip] eq_segmentation_comparison — {snap_path} not found")
 
     # ── 5. Side-by-side individual DC-shuffle tests ──────────────────────────
-    #       HMM (significant) and equal-size (not significant) shown together
     if os.path.exists(null_hmm_path) and os.path.exists(null_eq_path):
         try:
             null_hmm_arr = np.load(null_hmm_path)
@@ -1074,31 +1081,25 @@ def figure_equal_segmentation(k, eq_dir, k_out, dpi):
             fig, axes = plt.subplots(1, 2, figsize=(13, 4), sharey=False)
 
             for ax, null_arr, obs, p, title in [
-                (axes[0], null_hmm_arr, obs_hmm, p_hmm, "HMM segmentation"),
-                (axes[1], null_eq_arr,  obs_eq,  p_eq,  "Equal-size segmentation"),
+                (axes[0], null_hmm_arr, obs_hmm, p_hmm, "HMM Segmentation"),
+                (axes[1], null_eq_arr,  obs_eq,  p_eq,  "Equal-Duration Segmentation"),
             ]:
-                sig   = p < 0.05
-                color = "#DC2626" if sig else "#6B7280"   # red if sig, grey if n.s.
                 pct95 = np.percentile(null_arr, 95)
 
                 ax.hist(null_arr, bins=60, color="#94A3B8", edgecolor="white",
-                        linewidth=0.3, alpha=0.85, label="Label-shuffle null")
-                ax.axvline(obs, color=color, lw=2.5,
-                           label=f"Observed = {obs:+.4f}\np = {p:.4f}"
-                                 f"  {'✓ sig.' if sig else '✗ n.s.'}")
+                        linewidth=0.3, alpha=0.85, label="Label-Shuffle Null")
+                ax.axvline(obs, color="#DC2626", lw=2.5,
+                           label=f"Observed = {obs:+.4f}\np = {p:.4f}")
                 ax.axvline(pct95, color="black", lw=1.2, linestyle="--",
-                           alpha=0.7, label=f"Null 95th pct = {pct95:.4f}")
-                ax.set_xlabel("DC-weighted within − across F1 gap", fontsize=11)
+                           alpha=0.7, label=f"Null 95th Pct = {pct95:.4f}")
+                ax.set_xlabel("Distance-Conditioned Within-Across F1 Gap", fontsize=11)
                 ax.set_ylabel("Count", fontsize=11)
-                ax.set_title(title, fontsize=12,
-                             color="#1D4ED8" if sig else "#374151",
-                             fontweight="bold" if sig else "normal")
+                ax.set_title(title, fontsize=12)
                 ax.legend(fontsize=9)
                 ax.grid(True, alpha=0.3, linestyle="--")
 
             fig.suptitle(
-                "Distance-conditioned shuffle tests: HMM vs. equal-size segmentation\n"
-                "(within/across labels shuffled within each lag stratum independently)",
+                "Distance-Conditioned Shuffle Tests: HMM vs. Equal-Duration Segmentation",
                 fontsize=12,
             )
             fig.tight_layout()
