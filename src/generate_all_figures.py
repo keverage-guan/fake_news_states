@@ -26,6 +26,14 @@ Covers:
     - k{k}/distance_conditioned_null.png — permutation-test null histogram
     - k{k}/statepair_heatmap.png        — mean F1 per (train-state, test-state)
     - k{k}/f1_heatmap_with_states.png   — full F1 matrix sorted by HMM state
+    - k{k}/eq_gap_comparison.png        — HMM vs equal-duration pooled gap bar chart
+    - k{k}/eq_f1_vs_distance_both.png   — within/across F1 vs lag for both segmentations
+    - k{k}/eq_direct_perm_test.png      — null distribution for (HMM gap - equal gap)
+    - k{k}/eq_segmentation_comparison.png — window-by-window colour strip comparison
+
+  The equal-segmentation figures are read from pre-computed outputs saved by
+  check_equal_windows.py under --eq_dir/k{k}/.  Run check_equal_windows.py
+  for each k before running this script.
 
 Usage
 -----
@@ -38,8 +46,9 @@ Usage
         --hmm_dir    data/hmm_hmm/6way \\
         --perf_dir   data/hmm_perf/6way \\
         --wa_dir     data/hmm_within_across/6way \\
-        --pca_npz    data/hmm_weights/weights_pca.npz \\
+        --pca_npz    data/hmm_weights/6way/weights_pca.npz \\
         --manifest   data/splits/hmm_windows/HMM_windows_manifest.csv \\
+        --eq_dir     data/check_equal_windows \\
         --dpi 300
 """
 
@@ -80,6 +89,7 @@ STATE_PALETTE = [
     "#9467bd", "#8c564b", "#17becf", "#e377c2",
 ]
 COLORS_WA = {"within": "#2563EB", "across": "#DC2626"}
+COLORS_EQ = {"hmm": "#1f77b4", "equal": "#ff7f0e"}
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
@@ -102,6 +112,9 @@ def parse_args():
                    default="data/splits/hmm_windows/HMM_windows_manifest.csv",
                    help="Window manifest CSV with start/end dates and cls_* columns")
     p.add_argument("--dpi", type=int, default=150)
+    p.add_argument("--eq_dir",   default="data/check_equal_windows",
+                   help="Root dir written by check_equal_windows.py  "
+                        "(sub-dirs k{k}/ expected)")
     return p.parse_args()
 
 
@@ -222,43 +235,44 @@ def figure_window_distributions(out_dir, dpi):
                      ["multimodal_train.tsv", "multimodal_validate.tsv",
                       "multimodal_test_public.tsv"]]
         if all(os.path.exists(p) for p in raw_paths):
-            dfs = [pd.read_csv(p, sep="\t", low_memory=False,
-                               usecols=lambda c: c in cols) for p in raw_paths]
-            data = pd.concat(dfs, ignore_index=True)
-            if "hasImage" in data.columns:
-                data = data[data["hasImage"] == True]
-            data["created_utc"] = pd.to_numeric(data["created_utc"], errors="coerce")
-            data = data.dropna(subset=["created_utc"])
-            data["created_dt"] = pd.to_datetime(data["created_utc"], unit="s", utc=True)
-            return data.sort_values("created_dt").reset_index(drop=True)
+            dfs = []
+            for p in raw_paths:
+                try:
+                    dfs.append(pd.read_csv(p, sep="\t", low_memory=False,
+                                           usecols=lambda c: c in cols))
+                except Exception:
+                    pass
+            if dfs:
+                data = pd.concat(dfs, ignore_index=True)
+                if "id" in data.columns:
+                    data = data.drop_duplicates(subset="id")
+                data["created_utc"] = pd.to_numeric(data["created_utc"], errors="coerce")
+                data = data.dropna(subset=["created_utc"])
+                data["created_dt"] = pd.to_datetime(data["created_utc"], unit="s", utc=True)
+                return data.sort_values("created_dt").reset_index(drop=True)
         return None
 
     data = _load()
-    if data is None:
-        print("  [skip] no TSV data found")
+    if data is None or "created_dt" not in data.columns:
+        print("  [skip] window_distributions — no TSV data found")
         return
 
     days  = 60
-    color = "#4C72B0"
+    color = "#2563EB"
 
-    ts   = data["created_dt"].dt.tz_localize(None)
-    t0dt = ts.min().normalize()
-    t1dt = ts.max().normalize() + pd.Timedelta(days=1)
+    data["window_start"] = data["created_dt"].dt.floor(f"{days}D")
+    wdf = (data.groupby("window_start")
+               .size()
+               .reset_index(name="count")
+               .sort_values("window_start"))
 
-    total_days = (t1dt - t0dt).days
-    n_wins     = total_days // days + (1 if total_days % days else 0)
-    rows = []
-    for i in range(n_wins):
-        w_start = t0dt + pd.Timedelta(days=i * days)
-        w_end   = min(t0dt + pd.Timedelta(days=(i + 1) * days), t1dt)
-        count   = int(((ts >= w_start) & (ts < w_end)).sum())
-        rows.append({"window_start": w_start, "count": count,
-                     "actual_days": (w_end - w_start).days})
-    wdf = pd.DataFrame(rows)
+    wdf["actual_days"] = wdf["window_start"].diff().shift(-1).dt.days.fillna(days)
+
+    ts = wdf["window_start"].values
 
     fig, ax = plt.subplots(figsize=(14, 4))
-    ax.bar(wdf["window_start"], wdf["count"],
-           width=pd.Timedelta(days=days * 0.9), align="edge",
+    ax.bar(ts, wdf["count"].values, width=pd.Timedelta(days=days - 0.9),
+           align="edge",
            color=color, alpha=0.85, linewidth=0.3, edgecolor="white")
     mean_val = wdf["count"].mean()
     ax.axhline(mean_val, color="black", lw=1.0, ls="--", alpha=0.6, zorder=5)
@@ -447,52 +461,39 @@ def figure_pca_sanity(pca_npz, out_dir, dpi):
         fig.tight_layout()
         savefig(fig, out_path, dpi=dpi)
 
-    # ── 4a: PC1 vs PC2 scatter BEFORE alignment ───────────────────────────────
-    if "Z_before_scaled" in d:
-        Z_before = d["Z_before_scaled"].astype(np.float32)
-        _scatter(
-            Z_before,
-            title="PCA of UNALIGNED MLP weights\n"
-                  "(coloured by window, marker by seed — seed clustering expected)",
-            out_path=os.path.join(out_dir, "pca_sanity_before.png"),
-            xlabel="PC1 (unaligned)",
-            ylabel="PC2 (unaligned)",
-        )
+    # Before alignment
+    if "Z_unaligned" in d:
+        Z_un = d["Z_unaligned"].astype(np.float32)
+        _scatter(Z_un, "PCA: PC1 vs PC2 — BEFORE seed alignment",
+                 os.path.join(out_dir, "pca_sanity_before.png"))
     else:
-        print("    [skip] pca_sanity_before — Z_before_scaled not in weights_pca.npz "
-              "(re-run extract_weights_pca.py to populate it)")
+        print("    [info] Z_unaligned not in npz — skipping pca_sanity_before.png")
 
-    # ── 4b: PC1 vs PC2 scatter AFTER alignment ────────────────────────────────
-    _scatter(
-        Z_scaled,
-        title="PCA of aligned MLP weights\n(coloured by window, marker by seed)",
-        out_path=os.path.join(out_dir, "pca_sanity_after.png"),
-        xlabel=f"PC1 ({evr[0]*100:.1f}% var)",
-        ylabel=f"PC2 ({evr[1]*100:.1f}% var)",
-    )
+    # After alignment
+    _scatter(Z_scaled, "PCA: PC1 vs PC2 — AFTER seed alignment",
+             os.path.join(out_dir, "pca_sanity_after.png"))
 
-    # ── 4c: Component selection scree ────────────────────────────────────────
-    n_full = len(evr_full)
-    n_show = min(100, n_full)
-    xs     = np.arange(1, n_show + 1)
+    # Scree + component selection
+    n_full  = len(evr_full)
+    n_show  = min(n_full, 40)
+    cum_evr = np.cumsum(evr_full[:n_show])
 
-    broken_stick = np.array(
-        [(1 / n_full) * sum(1 / j for j in range(i, n_full + 1))
-         for i in range(1, n_show + 1)]
-    )
-
-    fig, ax = plt.subplots(figsize=(12, 5))
-    ax.plot(xs, evr_full[:n_show], "o-", color="#DC2626",
-            lw=1.5, ms=3, label="Per-component EVR")
-    ax.plot(xs, broken_stick, "--", color="#2563EB",
-            lw=1.5, label="Broken-stick expectation")
-    ax.axvline(len(evr), color="black", ls="--", lw=1.5,
-               label=f"Retained: {len(evr)} components (threshold={threshold:.3f})")
-    ax.set_xlabel("Principal component", fontsize=12)
-    ax.set_ylabel("Explained variance ratio", fontsize=12)
-    ax.set_title(f"PCA component selection (first {n_show} of {n_full} PCs shown)",
-                 fontsize=12)
-    ax.legend(fontsize=10); ax.grid(True, alpha=0.3)
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.bar(range(1, n_show + 1), evr_full[:n_show] * 100,
+           color="#94A3B8", alpha=0.8, label="Individual")
+    ax.plot(range(1, n_show + 1), cum_evr * 100,
+            "o-", color="#1D4ED8", lw=2, ms=4, label="Cumulative")
+    ax.axhline(threshold * 100, color="#DC2626", ls="--", lw=1.5,
+               label=f"Threshold ({threshold * 100:.0f}%)")
+    ax.axvline(len(evr), color="#16A34A", ls="--", lw=1.5,
+               label=f"n_components = {len(evr)}")
+    ax.set_xlabel("Principal Component", fontsize=12)
+    ax.set_ylabel("Explained Variance (%)", fontsize=12)
+    ax.set_title(
+        f"PCA component selection (first {n_show} of {n_full} PCs shown)",
+        fontsize=12)
+    ax.legend(fontsize=10)
+    ax.grid(True, alpha=0.3)
     fig.tight_layout()
     savefig(fig, os.path.join(out_dir, "pca_component_selection.png"), dpi=dpi)
 
@@ -535,7 +536,7 @@ def _state_strip(state_seq, start_dates, end_dates, k, out_path, dpi):
     colors    = [TAB10[s % 10] for s in state_seq]
     mid_dates = [s + (e - s) / 2 for s, e in zip(start_dates, end_dates)]
 
-    fig, ax = plt.subplots(figsize=(8, 3))
+    fig, ax = plt.subplots(figsize=(14, 3))
 
     ax.scatter(x_vals, state_seq, c=colors, s=80, zorder=3,
                edgecolors="white", linewidths=0.5)
@@ -860,7 +861,183 @@ def _f1_heatmap_with_states(f1_matrix, valid_ids_f1, state_seq, window_ids_dec,
     fig.tight_layout()
     savefig(fig, out_path, dpi=dpi)
 
-def run_per_k(k, hmm_dir, perf_dir, wa_dir, manifest_path, out_dir, dpi):
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# EQUAL-SEGMENTATION FIGURES  (reads pre-computed data from check_equal_windows.py)
+# ═════════════════════════════════════════════════════════════════════════════
+
+def figure_equal_segmentation(k, eq_dir, k_out, dpi):
+    """
+    Re-plot the four equal-segmentation figures from the files saved by
+    check_equal_windows.py under eq_dir/k{k}/.
+
+    Expected files
+    --------------
+    comparison_summary.csv       — rows: HMM, equal_duration, HMM_minus_equal
+    distance_stratified_both.csv — per-lag within/across means, method column
+    null_diffs.npy               — null distribution array for direct perm test
+    decode_snapshot.npz          — arrays: hmm_labels, equal_labels, N
+    """
+    banner(f"  Equal-segmentation figures  (k={k})")
+
+    src = os.path.join(eq_dir, f"k{k}")
+
+    summary_path = os.path.join(src, "comparison_summary.csv")
+    strat_path   = os.path.join(src, "distance_stratified_both.csv")
+    null_path    = os.path.join(src, "null_diffs.npy")
+    snap_path    = os.path.join(src, "decode_snapshot.npz")
+
+    if not os.path.exists(summary_path):
+        print(f"    [skip] all eq figures — {summary_path} not found")
+        return
+
+    summary = pd.read_csv(summary_path)
+
+    # ── 1. Gap comparison bar chart ───────────────────────────────────────────
+    try:
+        hmm_row   = summary[summary["method"] == "HMM"].iloc[0]
+        eq_row    = summary[summary["method"] == "equal_duration"].iloc[0]
+        hmm_gap   = float(hmm_row["gap"])
+        equal_gap = float(eq_row["gap"])
+        p_hmm     = float(hmm_row["dc_shuffle_p"])
+        p_eq      = float(eq_row["dc_shuffle_p"])
+
+        fig, ax = plt.subplots(figsize=(6, 5))
+        labels = ["HMM\nsegmentation", "Equal-duration\nsegmentation"]
+        gaps   = [hmm_gap, equal_gap]
+        colors = [COLORS_EQ["hmm"], COLORS_EQ["equal"]]
+        bars   = ax.bar(labels, gaps, color=colors, width=0.4,
+                        edgecolor="black", linewidth=0.8)
+        for bar, g, p in zip(bars, gaps, [p_hmm, p_eq]):
+            ax.text(bar.get_x() + bar.get_width() / 2,
+                    g + 0.002,
+                    f"gap = {g:+.4f}\np = {p:.4f}",
+                    ha="center", va="bottom", fontsize=10)
+        ax.axhline(0, color="black", linewidth=0.8, linestyle="--")
+        ax.set_ylabel("Within-group F1 − Across-group F1", fontsize=11)
+        ax.set_title("Generalisation gap: HMM vs. equal-duration segmentation",
+                     fontsize=12)
+        ax.set_ylim(min(0, min(gaps)) - 0.03, max(gaps) + 0.06)
+        fig.tight_layout()
+        savefig(fig, os.path.join(k_out, "eq_gap_comparison.png"), dpi=dpi)
+    except Exception as e:
+        print(f"    [skip] eq_gap_comparison — {e}")
+
+    # ── 2. F1 vs distance (both segmentations) ────────────────────────────────
+    if os.path.exists(strat_path):
+        try:
+            strat     = pd.read_csv(strat_path)
+            strat_hmm = strat[strat["method"] == "HMM"].copy()
+            strat_eq  = strat[strat["method"] == "equal_duration"].copy()
+
+            fig, axes = plt.subplots(1, 2, figsize=(14, 5), sharey=True)
+            for ax, s, label, color in [
+                (axes[0], strat_hmm, "HMM segmentation",           COLORS_EQ["hmm"]),
+                (axes[1], strat_eq,  "Equal-duration segmentation", COLORS_EQ["equal"]),
+            ]:
+                has_w  = set(s.loc[s["n_within"] > 0, "distance"])
+                has_a  = set(s.loc[s["n_across"] > 0, "distance"])
+                common = sorted(has_w & has_a)
+                if not common:
+                    ax.set_title(label + " (no overlapping distances)")
+                    continue
+                s = s[s["distance"].isin(common)].sort_values("distance")
+                d = s["distance"].values
+                ax.plot(d, s["within_mean"].values, color=color, lw=2,
+                        marker="o", ms=4, label="Within-group")
+                ax.plot(d, s["across_mean"].values, color=color, lw=2,
+                        marker="s", ms=4, linestyle="--", label="Across-group",
+                        alpha=0.7)
+                ax.fill_between(d, s["within_mean"].values, s["across_mean"].values,
+                                alpha=0.10, color=color)
+                ax.set_title(label, fontsize=12)
+                ax.set_xlabel("Temporal distance |i − j| (windows)", fontsize=11)
+                ax.set_xlim(min(common) - 0.5, max(common) + 0.5)
+                ax.legend(fontsize=10)
+                ax.grid(True, alpha=0.3, linestyle="--")
+            axes[0].set_ylabel("Macro F1", fontsize=11)
+            fig.suptitle(
+                "Within vs. across-group F1 by temporal lag\n"
+                "(x-axis limited to distances present in both within and across pairs)",
+                fontsize=12)
+            fig.tight_layout()
+            savefig(fig, os.path.join(k_out, "eq_f1_vs_distance_both.png"), dpi=dpi)
+        except Exception as e:
+            print(f"    [skip] eq_f1_vs_distance_both — {e}")
+    else:
+        print(f"    [skip] eq_f1_vs_distance_both — {strat_path} not found")
+
+    # ── 3. Direct permutation test null distribution ──────────────────────────
+    if os.path.exists(null_path):
+        try:
+            null_diffs = np.load(null_path)
+            diff_row   = summary[summary["method"].str.startswith("HMM_minus")].iloc[0]
+            obs_diff   = float(diff_row["gap"])
+            p_direct   = float(diff_row["dc_shuffle_p"])
+
+            fig, ax = plt.subplots(figsize=(8, 4))
+            ax.hist(null_diffs, bins=60, color="steelblue", alpha=0.75,
+                    label="Null distribution")
+            ax.axvline(obs_diff, color="red", lw=2,
+                       label=f"Observed diff = {obs_diff:+.4f}\np = {p_direct:.4f}")
+            ax.set_xlabel("HMM gap − equal-duration gap", fontsize=11)
+            ax.set_ylabel("Count", fontsize=11)
+            ax.set_title(
+                "Direct permutation test: does HMM segment better than equal-duration?",
+                fontsize=12)
+            ax.legend(fontsize=10)
+            fig.tight_layout()
+            savefig(fig, os.path.join(k_out, "eq_direct_perm_test.png"), dpi=dpi)
+        except Exception as e:
+            print(f"    [skip] eq_direct_perm_test — {e}")
+    else:
+        print(f"    [skip] eq_direct_perm_test — {null_path} not found")
+
+    # ── 4. Segmentation comparison strip ─────────────────────────────────────
+    if os.path.exists(snap_path):
+        try:
+            import matplotlib.cm as cm
+            snap         = np.load(snap_path, allow_pickle=True)
+            hmm_labels   = snap["hmm_labels"].astype(int)
+            equal_labels = snap["equal_labels"].astype(int)
+            N            = int(snap["N"])
+
+            n_groups = max(hmm_labels.max(), equal_labels.max()) + 1
+            cmap     = cm.tab10
+            colors   = [cmap(i / 10) for i in range(n_groups)]
+
+            fig, axes = plt.subplots(2, 1, figsize=(14, 3),
+                                     gridspec_kw={"hspace": 0.6})
+            for ax, lbl_arr, title in [
+                (axes[0], hmm_labels,   "HMM segmentation"),
+                (axes[1], equal_labels, "Equal-duration segmentation"),
+            ]:
+                for i, lbl in enumerate(lbl_arr):
+                    ax.bar(i, 1, color=colors[lbl], edgecolor="white", linewidth=0.3)
+                ax.set_xlim(-0.5, N - 0.5)
+                ax.set_ylim(0, 1)
+                ax.set_yticks([])
+                ax.set_xlabel("Window index →", fontsize=9)
+                ax.set_title(title, fontsize=10)
+                patches = [mpatches.Patch(color=colors[g], label=f"G{g}")
+                           for g in range(n_groups)]
+                ax.legend(handles=patches, loc="upper right", fontsize=7,
+                          ncol=n_groups, framealpha=0.7)
+            fig.suptitle("Segmentation comparison (each bar = one 60-day window)",
+                         fontsize=11)
+            savefig(fig, os.path.join(k_out, "eq_segmentation_comparison.png"), dpi=dpi)
+        except Exception as e:
+            print(f"    [skip] eq_segmentation_comparison — {e}")
+    else:
+        print(f"    [skip] eq_segmentation_comparison — {snap_path} not found")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# RUN PER-K
+# ═════════════════════════════════════════════════════════════════════════════
+
+def run_per_k(k, hmm_dir, perf_dir, wa_dir, manifest_path, out_dir, eq_dir, dpi):
     print(f"\n{'═'*60}")
     print(f"  Generating figures for k = {k}")
     print(f"{'═'*60}")
@@ -923,6 +1100,9 @@ def run_per_k(k, hmm_dir, perf_dir, wa_dir, manifest_path, out_dir, dpi):
         print("    [skip] statepair_heatmap and f1_heatmap_with_states — "
               "cross_window_f1.npz not found")
 
+    # Equal-segmentation figures (reads pre-computed data from check_equal_windows.py)
+    figure_equal_segmentation(k, eq_dir, k_out, dpi)
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # MAIN
@@ -937,6 +1117,7 @@ def main():
     print(f"  output_dir : {args.output_dir}")
     print(f"  k values   : {args.k}")
     print(f"  n_way      : {N_WAY}")
+    print(f"  eq_dir     : {args.eq_dir}")
     print(f"  dpi        : {args.dpi}")
     print(f"{'═'*60}")
 
@@ -946,10 +1127,10 @@ def main():
     figure_model_selection(args.hmm_dir, args.output_dir, args.dpi)
     figure_pca_sanity(args.pca_npz, args.output_dir, args.dpi)
 
-    # Per-k figures
+    # Per-k figures (including equal-segmentation)
     for k in args.k:
         run_per_k(k, args.hmm_dir, args.perf_dir, args.wa_dir,
-                  args.manifest, args.output_dir, args.dpi)
+                  args.manifest, args.output_dir, args.eq_dir, args.dpi)
 
     print(f"\n{'═'*60}")
     print(f"  Done.  All figures in: {args.output_dir}/")
