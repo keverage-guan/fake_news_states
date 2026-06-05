@@ -46,7 +46,7 @@ Usage
   python src/check_equal_windows.py \
       --decode_npz    data/hmm_hmm/6way/final_decode_k7.npz \
       --f1_npz        data/hmm_perf/6way/cross_window_f1.npz \
-      --output_dir    data/k7/check_equal_windows \
+      --output_dir    data/check_equal_windows/k7 \
       --n_permutations 10000 \
       --seed 42
 """
@@ -479,6 +479,8 @@ def main():
     np.save(os.path.join(args.output_dir, "null_diffs.npy"), null_diffs)
     np.savez(os.path.join(args.output_dir, "decode_snapshot.npz"),
             hmm_labels=hmm_labels, equal_labels=equal_labels, N=N)
+    np.save(os.path.join(args.output_dir, "null_hmm.npy"), null_hmm)
+    np.save(os.path.join(args.output_dir, "null_eq.npy"),  null_eq)
 
     print("\nDone.")
 

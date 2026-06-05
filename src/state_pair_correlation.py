@@ -34,10 +34,10 @@ Usage
   python src/state_pair_correlation.py
 
   python src/state_pair_correlation.py \
-      --decode_npz   data/hmm_hmm/6way/final_decode_k7.npz \
+      --decode_npz   data/hmm_hmm/6way/final_decode_k8.npz \
       --f1_npz       data/hmm_perf/6way/cross_window_f1.npz \
       --manifest     data/splits/hmm_windows/HMM_windows_manifest.csv \
-      --output_dir   data/state_pair_correlation/k7 \
+      --output_dir   data/state_pair_correlation/k8 \
       --n_permutations 10000 \
       --seed 42
 """

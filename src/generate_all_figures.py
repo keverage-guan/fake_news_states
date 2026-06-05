@@ -30,6 +30,7 @@ Covers:
     - k{k}/eq_f1_vs_distance_both.png   — within/across F1 vs lag for both segmentations
     - k{k}/eq_direct_perm_test.png      — null distribution for (HMM gap - equal gap)
     - k{k}/eq_segmentation_comparison.png — window-by-window colour strip comparison
+    - k{k}/eq_individual_perm_tests.png — side-by-side DC shuffle tests per segmentation
 
   The equal-segmentation figures are read from pre-computed outputs saved by
   check_equal_windows.py under --eq_dir/k{k}/.  Run check_equal_windows.py
@@ -376,7 +377,6 @@ def figure_model_selection(hmm_dir, out_dir, dpi):
     ax.set_xticks(k_arr)
     ax.legend(fontsize=10)
     ax.grid(True, alpha=0.3)
-
     fig.tight_layout()
     savefig(fig, os.path.join(out_dir, "hmm_model_selection_6way.png"), dpi=dpi)
 
@@ -455,51 +455,52 @@ def figure_pca_sanity(pca_npz, out_dir, dpi):
             mlines.Line2D([], [], color="grey",
                           marker=MARKERS[seed_to_idx[s] % len(MARKERS)],
                           linestyle="None", markersize=7, alpha=0.8, label=f"seed {s}")
-            for s in unique_seeds[:len(MARKERS)]
+            for s in unique_seeds[:min(len(unique_seeds), 10)]
         ]
-        ax.legend(handles=legend_els, title="seed", fontsize=8, loc="upper right")
+        ax.legend(handles=legend_els, fontsize=7, ncol=2,
+                  loc="upper right", framealpha=0.7)
         fig.tight_layout()
         savefig(fig, out_path, dpi=dpi)
 
-    # Before alignment
-    if "Z_unaligned" in d:
-        Z_un = d["Z_unaligned"].astype(np.float32)
-        _scatter(Z_un, "PCA: PC1 vs PC2 — BEFORE seed alignment",
-                 os.path.join(out_dir, "pca_sanity_before.png"))
-    else:
-        print("    [info] Z_unaligned not in npz — skipping pca_sanity_before.png")
-
-    # After alignment
-    _scatter(Z_scaled, "PCA: PC1 vs PC2 — AFTER seed alignment",
+    # Before alignment: raw Z_scaled (first two components)
+    _scatter(Z_scaled, "PCA — PC1 vs PC2 (z-scored, aligned)",
              os.path.join(out_dir, "pca_sanity_after.png"))
 
-    # Scree + component selection
-    n_full  = len(evr_full)
-    n_show  = min(n_full, 40)
-    cum_evr = np.cumsum(evr_full[:n_show])
+    # Unaligned weights if available
+    if "Z_unaligned" in d:
+        Z_un = d["Z_unaligned"].astype(np.float32)
+        _scatter(Z_un, "PCA — PC1 vs PC2 (UNALIGNED weights)",
+                 os.path.join(out_dir, "pca_sanity_before.png"))
 
-    fig, ax = plt.subplots(figsize=(10, 4))
-    ax.bar(range(1, n_show + 1), evr_full[:n_show] * 100,
-           color="#94A3B8", alpha=0.8, label="Individual")
-    ax.plot(range(1, n_show + 1), cum_evr * 100,
-            "o-", color="#1D4ED8", lw=2, ms=4, label="Cumulative")
-    ax.axhline(threshold * 100, color="#DC2626", ls="--", lw=1.5,
-               label=f"Threshold ({threshold * 100:.0f}%)")
-    ax.axvline(len(evr), color="#16A34A", ls="--", lw=1.5,
-               label=f"n_components = {len(evr)}")
-    ax.set_xlabel("Principal Component", fontsize=12)
-    ax.set_ylabel("Explained Variance (%)", fontsize=12)
-    ax.set_title(
-        f"PCA component selection (first {n_show} of {n_full} PCs shown)",
-        fontsize=12)
-    ax.legend(fontsize=10)
-    ax.grid(True, alpha=0.3)
+    # Scree / component-selection plot
+    n_components = len(evr)
+    cumvar = np.cumsum(evr)
+    n_retained = int(threshold) if threshold >= 1 else int(np.searchsorted(cumvar, threshold) + 1)
+
+    fig, ax1 = plt.subplots(figsize=(9, 5))
+    ax2 = ax1.twinx()
+
+    ax1.bar(range(1, n_components + 1), evr * 100,
+            color="#3B82F6", alpha=0.7, label="Individual EVR")
+    ax2.plot(range(1, n_components + 1), cumvar * 100,
+             "o-", color="#DC2626", lw=2, ms=4, label="Cumulative EVR")
+    ax2.axhline(95, color="black", lw=1, ls="--", alpha=0.5)
+    ax1.axvline(n_retained + 0.5, color="#16A34A", lw=2, ls="--",
+                label=f"Retained: {n_retained} components")
+
+    ax1.set_xlabel("Principal Component", fontsize=12)
+    ax1.set_ylabel("Explained Variance (%)", fontsize=12)
+    ax2.set_ylabel("Cumulative EVR (%)", fontsize=12)
+    ax1.set_title("PCA Component Selection", fontsize=13)
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, fontsize=10)
     fig.tight_layout()
     savefig(fig, os.path.join(out_dir, "pca_component_selection.png"), dpi=dpi)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# PER-K FIGURES
+# PER-K HELPER FIGURES
 # ═════════════════════════════════════════════════════════════════════════════
 
 def _transition_matrix(trans_mat, k, out_path, dpi):
@@ -521,7 +522,7 @@ def _transition_matrix(trans_mat, k, out_path, dpi):
 
 
 def _state_strip(state_seq, start_dates, end_dates, k, out_path, dpi):
-    # ── Relabel states in order of first chronological appearance ────────────
+    # Relabel states in order of first chronological appearance
     relabel = {}
     next_id = 0
     for s in state_seq:
@@ -529,7 +530,7 @@ def _state_strip(state_seq, start_dates, end_dates, k, out_path, dpi):
             relabel[s] = next_id
             next_id += 1
     state_seq = np.array([relabel[s] for s in state_seq])
-    k_plot    = next_id   # may be < k if some states never appear in the decode
+    k_plot    = next_id
 
     n_win     = len(state_seq)
     x_vals    = np.arange(n_win)
@@ -684,52 +685,64 @@ def _timeline_with_classes(dec, manifest_path, k, out_path, dpi):
         else:
             props.append([0.0] * N_WAY)
 
-    props_arr = np.array(props)
-    starts_dt = [s.to_pydatetime() for s in starts]
-    ends_dt   = [pd.Timestamp(s + pd.Timedelta(days=60)).to_pydatetime() for s in starts]
-    date_nums = [date_to_mpl(s) for s in starts_dt]
+    props_arr = np.array(props)   # (N, 6)
+    N         = len(window_ids)
+    runs      = contiguous_runs(state_seq)
 
-    fig, (ax_top, ax_bot) = plt.subplots(
-        2, 1, figsize=(14, 7), sharex=True,
-        gridspec_kw={"height_ratios": [1, 3]})
+    fig, (ax_bar, ax_stack) = plt.subplots(
+        2, 1, figsize=(14, 6),
+        gridspec_kw={"height_ratios": [1, 4]},
+        sharex=False,
+    )
 
-    # Top: state colour bar with run labels
-    runs = contiguous_runs(state_seq)
-    for state, i0, i1 in runs:
-        left  = date_to_mpl(starts_dt[i0])
-        right = date_to_mpl(ends_dt[i1])
-        ax_top.barh(0, right - left, left=left, height=0.8,
+    # ── Top panel: state colour bar ──────────────────────────────────────────
+    for state, s_idx, e_idx in runs:
+        left  = date_to_mpl(starts[s_idx])
+        right = date_to_mpl(starts[min(e_idx + 1, N - 1)])
+        ax_bar.barh(0, right - left, left=left, height=0.8,
                     color=TAB10[state % 10], alpha=0.9, linewidth=0)
-        ax_top.text((left + right) / 2, 0, str(state),
-                    ha="center", va="center", fontsize=9,
-                    fontweight="bold", color="white")
+        mid = (left + right) / 2
+        ax_bar.text(mid, 0, f"S{state}", ha="center", va="center",
+                    fontsize=8, fontweight="bold", color="white")
+    ax_bar.set_yticks([]); ax_bar.set_xticks([])
+    ax_bar.set_title(f"HMM state sequence and 6-way class composition  (k={k})",
+                     fontsize=12)
+    ax_bar.set_xlim(date_to_mpl(starts[0]), date_to_mpl(starts[-1]))
+    ax_bar.set_ylim(-0.6, 0.6)
 
-    # State boundary lines on both panels
-    boundary_nums = []
-    for idx in np.where(np.diff(state_seq) != 0)[0]:
-        boundary_nums.append(date_to_mpl(ends_dt[idx]))
-    for bn in boundary_nums:
-        ax_top.axvline(bn, color="black", lw=1.0, ls="--", alpha=0.7)
-        ax_bot.axvline(bn, color="black", lw=1.0, ls="--", alpha=0.7)
+    # ── Bottom panel: stacked class proportions ───────────────────────────────
+    x_dates = [mdates.date2num(s.to_pydatetime()) for s in starts]
+    order   = np.argsort(props_arr.mean(axis=0))[::-1]
+    bottom  = np.zeros(N)
+    for ci in order:
+        y = props_arr[:, ci]
+        ax_stack.fill_between(x_dates, bottom, bottom + y,
+                              color=CLASS_COLORS[ci], alpha=0.85,
+                              label=CLASS_NAMES[ci], step=None)
+        ax_stack.plot(x_dates, bottom + y, color="white", lw=0.3, alpha=0.5)
+        bottom += y
 
-    ax_top.set_ylim(-0.5, 0.5); ax_top.set_yticks([])
-    ax_top.set_title(f"HMM State (k={k})", fontsize=10, loc="left")
+    # Vertical dashed lines at state boundaries
+    for _, _, e_idx in runs[:-1]:
+        if e_idx + 1 < N:
+            ax_stack.axvline(date_to_mpl(starts[e_idx + 1]),
+                             color="black", lw=1.0, ls="--", alpha=0.5, zorder=5)
 
-    # Bottom: stacked area
-    ax_bot.stackplot(date_nums, props_arr.T,
-                     labels=CLASS_NAMES, colors=CLASS_COLORS, alpha=0.85)
-    ax_bot.set_ylabel("Class proportion", fontsize=11)
-    ax_bot.set_ylim(0, 1)
-    ax_bot.xaxis_date()
-    ax_bot.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
-    ax_bot.xaxis.set_major_locator(mdates.MonthLocator(interval=6))
-    ax_bot.legend(loc="upper left", fontsize=8, ncol=3, framealpha=0.7)
-    ax_bot.grid(axis="y", alpha=0.3, ls="--")
+    ax_stack.set_xlim(x_dates[0], x_dates[-1])
+    ax_stack.set_ylim(0, 1)
+    ax_stack.set_ylabel("Class proportion", fontsize=11)
+    ax_stack.set_xlabel("Date", fontsize=11)
+    ax_stack.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
+    ax_stack.xaxis.set_major_locator(mdates.MonthLocator(interval=6))
+    plt.setp(ax_stack.xaxis.get_majorticklabels(), rotation=35, ha="right", fontsize=8)
+    ax_stack.grid(True, axis="y", alpha=0.25, linestyle="--")
+    ax_stack.spines[["top", "right"]].set_visible(False)
 
-    fig.autofmt_xdate(rotation=30, ha="right")
-    fig.suptitle(
-        f"State Timeline with 6-way Class Proportions (k={k})",
-        fontsize=13, fontweight="bold")
+    class_patches = [mpatches.Patch(color=CLASS_COLORS[ci], label=CLASS_NAMES[ci])
+                     for ci in order]
+    ax_stack.legend(handles=class_patches, loc="upper left",
+                    bbox_to_anchor=(0.0, -0.22), fontsize=8, ncol=3, framealpha=0.85)
+
     fig.tight_layout()
     savefig(fig, out_path, dpi=dpi)
 
@@ -767,12 +780,15 @@ def _distance_conditioned_null(null_npz_path, out_path, dpi):
     null_gaps    = d["null_gaps"]
     observed_gap = float(d["observed_gap"])
     p_value      = float(np.mean(null_gaps >= observed_gap))
+    pct95        = np.percentile(null_gaps, 95)
 
     fig, ax = plt.subplots(figsize=(6, 4))
     ax.hist(null_gaps, bins=60, color="#94A3B8", edgecolor="white",
             lw=0.3, alpha=0.85, label="Label-shuffle null")
     ax.axvline(observed_gap, color="#DC2626", lw=2.5,
                label=f"Observed gap = {observed_gap:.4f}  (p = {p_value:.4f})")
+    ax.axvline(pct95, color="black", lw=1.2, linestyle="--", alpha=0.7,
+               label=f"Null 95th pct = {pct95:.4f}")
     ax.set_xlabel("Within − Across F1 Gap", fontsize=12)
     ax.set_ylabel("Count", fontsize=12)
     ax.set_title("Distance-Conditioned Permutation Test", fontsize=13)
@@ -825,7 +841,7 @@ def _statepair_heatmap(f1_matrix, valid_ids_f1, state_seq, window_ids_dec,
 def _f1_heatmap_with_states(f1_matrix, valid_ids_f1, state_seq, window_ids_dec,
                              k, out_path, dpi):
     """Full F1 heatmap in natural window order, with state boundaries marked."""
-    wid_to_state = {w: s for w, s in zip(window_ids_dec, state_seq)}
+    wid_to_state = dict(zip(window_ids_dec, state_seq))
     valid_arr    = np.array(valid_ids_f1)
     N            = len(valid_arr)
     states_valid = np.array([wid_to_state.get(w, -1) for w in valid_arr])
@@ -840,7 +856,6 @@ def _f1_heatmap_with_states(f1_matrix, valid_ids_f1, state_seq, window_ids_dec,
                    extent=[-0.5, N - 0.5, N - 0.5, -0.5])
     plt.colorbar(im, ax=ax, label="Macro F1", fraction=0.035, pad=0.02)
 
-    # ── State boundary lines ──────────────────────────────────────────────────
     boundaries = [i - 0.5 for i in range(1, N)
                   if states_valid[i] != states_valid[i - 1]
                   and states_valid[i] >= 0 and states_valid[i - 1] >= 0]
@@ -862,31 +877,34 @@ def _f1_heatmap_with_states(f1_matrix, valid_ids_f1, state_seq, window_ids_dec,
     savefig(fig, out_path, dpi=dpi)
 
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # EQUAL-SEGMENTATION FIGURES  (reads pre-computed data from check_equal_windows.py)
 # ═════════════════════════════════════════════════════════════════════════════
 
 def figure_equal_segmentation(k, eq_dir, k_out, dpi):
     """
-    Re-plot the four equal-segmentation figures from the files saved by
+    Re-plot the equal-segmentation figures from the files saved by
     check_equal_windows.py under eq_dir/k{k}/.
 
     Expected files
     --------------
     comparison_summary.csv       — rows: HMM, equal_duration, HMM_minus_equal
     distance_stratified_both.csv — per-lag within/across means, method column
-    null_diffs.npy               — null distribution array for direct perm test
+    null_diffs.npy               — null distribution for direct perm test
+    null_hmm.npy                 — null distribution for HMM DC shuffle test
+    null_eq.npy                  — null distribution for equal DC shuffle test
     decode_snapshot.npz          — arrays: hmm_labels, equal_labels, N
     """
     banner(f"  Equal-segmentation figures  (k={k})")
 
     src = os.path.join(eq_dir, f"k{k}")
 
-    summary_path = os.path.join(src, "comparison_summary.csv")
-    strat_path   = os.path.join(src, "distance_stratified_both.csv")
-    null_path    = os.path.join(src, "null_diffs.npy")
-    snap_path    = os.path.join(src, "decode_snapshot.npz")
+    summary_path  = os.path.join(src, "comparison_summary.csv")
+    strat_path    = os.path.join(src, "distance_stratified_both.csv")
+    null_path     = os.path.join(src, "null_diffs.npy")
+    snap_path     = os.path.join(src, "decode_snapshot.npz")
+    null_hmm_path = os.path.join(src, "null_hmm.npy")
+    null_eq_path  = os.path.join(src, "null_eq.npy")
 
     if not os.path.exists(summary_path):
         print(f"    [skip] all eq figures — {summary_path} not found")
@@ -894,7 +912,7 @@ def figure_equal_segmentation(k, eq_dir, k_out, dpi):
 
     summary = pd.read_csv(summary_path)
 
-    # ── 1. Gap comparison bar chart ───────────────────────────────────────────
+    # ── 1. Gap comparison bar chart ──────────────────────────────────────────
     try:
         hmm_row   = summary[summary["method"] == "HMM"].iloc[0]
         eq_row    = summary[summary["method"] == "equal_duration"].iloc[0]
@@ -924,7 +942,7 @@ def figure_equal_segmentation(k, eq_dir, k_out, dpi):
     except Exception as e:
         print(f"    [skip] eq_gap_comparison — {e}")
 
-    # ── 2. F1 vs distance (both segmentations) ────────────────────────────────
+    # ── 2. F1 vs distance (both segmentations) ───────────────────────────────
     if os.path.exists(strat_path):
         try:
             strat     = pd.read_csv(strat_path)
@@ -968,25 +986,34 @@ def figure_equal_segmentation(k, eq_dir, k_out, dpi):
     else:
         print(f"    [skip] eq_f1_vs_distance_both — {strat_path} not found")
 
-    # ── 3. Direct permutation test null distribution ──────────────────────────
+    # ── 3. Direct permutation test (HMM gap − equal gap) ────────────────────
+    #       Styled to match distance_conditioned_null.png from the main analysis
     if os.path.exists(null_path):
         try:
-            null_diffs = np.load(null_path)
-            diff_row   = summary[summary["method"].str.startswith("HMM_minus")].iloc[0]
-            obs_diff   = float(diff_row["gap"])
-            p_direct   = float(diff_row["dc_shuffle_p"])
+            null_diffs   = np.load(null_path)
+            hmm_row      = summary[summary["method"] == "HMM"].iloc[0]
+            eq_row       = summary[summary["method"] == "equal_duration"].iloc[0]
+            obs_diff     = float(hmm_row["gap"]) - float(eq_row["gap"])
+            p_direct_row = summary[summary["method"].str.startswith("HMM_minus")].iloc[0]
+            p_direct     = float(p_direct_row["dc_shuffle_p"])
+            pct95        = np.percentile(null_diffs, 95)
 
-            fig, ax = plt.subplots(figsize=(8, 4))
-            ax.hist(null_diffs, bins=60, color="steelblue", alpha=0.75,
-                    label="Null distribution")
-            ax.axvline(obs_diff, color="red", lw=2,
-                       label=f"Observed diff = {obs_diff:+.4f}\np = {p_direct:.4f}")
-            ax.set_xlabel("HMM gap − equal-duration gap", fontsize=11)
-            ax.set_ylabel("Count", fontsize=11)
+            fig, ax = plt.subplots(figsize=(7, 4))
+            ax.hist(null_diffs, bins=60, color="#94A3B8", edgecolor="white",
+                    linewidth=0.3, alpha=0.85, label="Null distribution\n(HMM labels permuted)")
+            ax.axvline(obs_diff, color="#DC2626", lw=2.5,
+                       label=f"Observed Δgap = {obs_diff:+.4f}   (p = {p_direct:.4f})")
+            ax.axvline(pct95, color="black", lw=1.2, linestyle="--", alpha=0.7,
+                       label=f"Null 95th pct = {pct95:.4f}")
+            ax.set_xlabel("HMM pooled gap − Equal pooled gap", fontsize=12)
+            ax.set_ylabel("Count", fontsize=12)
             ax.set_title(
-                "Direct permutation test: does HMM segment better than equal-duration?",
-                fontsize=12)
+                f"Direct permutation test: HMM gap > equal-size gap\n"
+                f"(n = {len(null_diffs):,} permutations of HMM window labels)",
+                fontsize=12,
+            )
             ax.legend(fontsize=10)
+            ax.grid(True, alpha=0.3, linestyle="--")
             fig.tight_layout()
             savefig(fig, os.path.join(k_out, "eq_direct_perm_test.png"), dpi=dpi)
         except Exception as e:
@@ -997,15 +1024,13 @@ def figure_equal_segmentation(k, eq_dir, k_out, dpi):
     # ── 4. Segmentation comparison strip ─────────────────────────────────────
     if os.path.exists(snap_path):
         try:
-            import matplotlib.cm as cm
             snap         = np.load(snap_path, allow_pickle=True)
             hmm_labels   = snap["hmm_labels"].astype(int)
             equal_labels = snap["equal_labels"].astype(int)
             N            = int(snap["N"])
 
             n_groups = max(hmm_labels.max(), equal_labels.max()) + 1
-            cmap     = cm.tab10
-            colors   = [cmap(i / 10) for i in range(n_groups)]
+            colors   = [TAB10[i % 10] for i in range(n_groups)]
 
             fig, axes = plt.subplots(2, 1, figsize=(14, 3),
                                      gridspec_kw={"hspace": 0.6})
@@ -1032,9 +1057,61 @@ def figure_equal_segmentation(k, eq_dir, k_out, dpi):
     else:
         print(f"    [skip] eq_segmentation_comparison — {snap_path} not found")
 
+    # ── 5. Side-by-side individual DC-shuffle tests ──────────────────────────
+    #       HMM (significant) and equal-size (not significant) shown together
+    if os.path.exists(null_hmm_path) and os.path.exists(null_eq_path):
+        try:
+            null_hmm_arr = np.load(null_hmm_path)
+            null_eq_arr  = np.load(null_eq_path)
+
+            hmm_row  = summary[summary["method"] == "HMM"].iloc[0]
+            eq_row   = summary[summary["method"] == "equal_duration"].iloc[0]
+            obs_hmm  = float(hmm_row["dc_shuffle_stat"])
+            obs_eq   = float(eq_row["dc_shuffle_stat"])
+            p_hmm    = float(hmm_row["dc_shuffle_p"])
+            p_eq     = float(eq_row["dc_shuffle_p"])
+
+            fig, axes = plt.subplots(1, 2, figsize=(13, 4), sharey=False)
+
+            for ax, null_arr, obs, p, title in [
+                (axes[0], null_hmm_arr, obs_hmm, p_hmm, "HMM segmentation"),
+                (axes[1], null_eq_arr,  obs_eq,  p_eq,  "Equal-size segmentation"),
+            ]:
+                sig   = p < 0.05
+                color = "#DC2626" if sig else "#6B7280"   # red if sig, grey if n.s.
+                pct95 = np.percentile(null_arr, 95)
+
+                ax.hist(null_arr, bins=60, color="#94A3B8", edgecolor="white",
+                        linewidth=0.3, alpha=0.85, label="Label-shuffle null")
+                ax.axvline(obs, color=color, lw=2.5,
+                           label=f"Observed = {obs:+.4f}\np = {p:.4f}"
+                                 f"  {'✓ sig.' if sig else '✗ n.s.'}")
+                ax.axvline(pct95, color="black", lw=1.2, linestyle="--",
+                           alpha=0.7, label=f"Null 95th pct = {pct95:.4f}")
+                ax.set_xlabel("DC-weighted within − across F1 gap", fontsize=11)
+                ax.set_ylabel("Count", fontsize=11)
+                ax.set_title(title, fontsize=12,
+                             color="#1D4ED8" if sig else "#374151",
+                             fontweight="bold" if sig else "normal")
+                ax.legend(fontsize=9)
+                ax.grid(True, alpha=0.3, linestyle="--")
+
+            fig.suptitle(
+                "Distance-conditioned shuffle tests: HMM vs. equal-size segmentation\n"
+                "(within/across labels shuffled within each lag stratum independently)",
+                fontsize=12,
+            )
+            fig.tight_layout()
+            savefig(fig, os.path.join(k_out, "eq_individual_perm_tests.png"), dpi=dpi)
+        except Exception as e:
+            print(f"    [skip] eq_individual_perm_tests — {e}")
+    else:
+        print(f"    [skip] eq_individual_perm_tests — null_hmm.npy or null_eq.npy not found "
+              f"(re-run check_equal_windows.py to generate them)")
+
 
 # ═════════════════════════════════════════════════════════════════════════════
-# RUN PER-K
+# PER-K
 # ═════════════════════════════════════════════════════════════════════════════
 
 def run_per_k(k, hmm_dir, perf_dir, wa_dir, manifest_path, out_dir, eq_dir, dpi):
