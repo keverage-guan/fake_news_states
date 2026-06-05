@@ -336,8 +336,6 @@ def figure_model_selection(hmm_dir, out_dir, dpi):
 
     d = np.load(scores_path)
     k_arr    = d["k_range"]
-    bic_best = d["bic_best"]
-    aic_best = d["aic_best"]
     loo_mean = d["loo_mean"]
     loo_std  = d["loo_std"]
     ari_mean = d["ari_mean"]
@@ -345,47 +343,30 @@ def figure_model_selection(hmm_dir, out_dir, dpi):
     loo_all  = d["loo_all"]
 
     valid = np.isfinite(loo_mean)
-    k_bic = k_arr[np.argmin(bic_best)]
-    k_aic = k_arr[np.argmin(aic_best)]
-    k_loo = k_arr[valid][np.argmax(loo_mean[valid])] if valid.any() else None
 
-    # ── 3a: BIC / AIC / LOO panel ────────────────────────────────────────────
-    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
-    fig.suptitle("HMM State Selection (6-way)", fontsize=14, fontweight="bold")
+    # ── LOO-CV panel ─────────────────────────────────────────────────────────
+    fig, ax = plt.subplots(1, 1, figsize=(6, 5))
 
-    ax = axes[0]
-    ax.plot(k_arr, bic_best, "o-", color="#2563EB", lw=2, ms=6, label="BIC (best init)")
-    ax.axvline(k_bic, color="#2563EB", ls="--", alpha=0.6, label=f"k={k_bic} (min BIC)")
-    ax.set_xlabel("k", fontsize=12); ax.set_ylabel("BIC", fontsize=12)
-    ax.set_title("BIC — lower is better", fontsize=12)
-    ax.set_xticks(k_arr); ax.legend(fontsize=10); ax.grid(True, alpha=0.3)
-
-    ax = axes[1]
-    ax.plot(k_arr, aic_best, "o-", color="#9333EA", lw=2, ms=6, label="AIC (best init)")
-    ax.axvline(k_aic, color="#9333EA", ls="--", alpha=0.6, label=f"k={k_aic} (min AIC)")
-    ax.set_xlabel("k", fontsize=12); ax.set_ylabel("AIC", fontsize=12)
-    ax.set_title("AIC — lower is better", fontsize=12)
-    ax.set_xticks(k_arr); ax.legend(fontsize=10); ax.grid(True, alpha=0.3)
-
-    ax = axes[2]
     if valid.any():
         ax.plot(k_arr[valid], loo_mean[valid], "o-", color="#16A34A",
-                lw=2, ms=6, label="LOO-CV mean")
+                lw=2, ms=6, label="Mean LOO-CV")
         ax.fill_between(k_arr[valid],
                         loo_mean[valid] - loo_std[valid],
                         loo_mean[valid] + loo_std[valid],
                         alpha=0.15, color="#16A34A")
-        if k_loo is not None:
-            ax.axvline(k_loo, color="#16A34A", ls="--", alpha=0.6,
-                       label=f"k={k_loo} (max LOO)")
-    ax.set_xlabel("k", fontsize=12); ax.set_ylabel("Held-out LL/obs", fontsize=12)
-    ax.set_title("LOO-CV — higher is better", fontsize=12)
-    ax.set_xticks(k_arr); ax.legend(fontsize=10); ax.grid(True, alpha=0.3)
+    ax.axvline(7, color="#16A34A", ls="--", alpha=0.6,
+               label=r"$k = 7$ (selected)")
+    ax.set_xlabel("Number of States ($k$)", fontsize=12)
+    ax.set_ylabel("Mean Held-Out Log-Likelihood per Observation", fontsize=12)
+    ax.set_title("Leave-One-Out Cross-Validation", fontsize=12)
+    ax.set_xticks(k_arr)
+    ax.legend(fontsize=10)
+    ax.grid(True, alpha=0.3)
 
     fig.tight_layout()
     savefig(fig, os.path.join(out_dir, "hmm_model_selection_6way.png"), dpi=dpi)
 
-    # ── 3b: ARI stability ────────────────────────────────────────────────────
+    # ── ARI stability ────────────────────────────────────────────────────────
     ari_mean_r = np.nanmean(ari_all, axis=1)
     ari_std_r  = np.nanstd(ari_all,  axis=1)
 
@@ -393,25 +374,26 @@ def figure_model_selection(hmm_dir, out_dir, dpi):
     ax.plot(k_arr, ari_mean_r, "o-", color="#EA580C", lw=2, ms=6)
     ax.fill_between(k_arr, ari_mean_r - ari_std_r, ari_mean_r + ari_std_r,
                     alpha=0.15, color="#EA580C")
-    ax.set_xlabel("k", fontsize=12)
-    ax.set_ylabel("Pairwise ARI", fontsize=12)
-    ax.set_title("Viterbi decode stability across random inits (6-way)", fontsize=12)
-    ax.set_xticks(k_arr); ax.grid(True, alpha=0.3)
+    ax.set_xlabel("Number of States ($k$)", fontsize=12)
+    ax.set_ylabel("Mean Pairwise ARI", fontsize=12)
+    ax.set_title("Viterbi Decode Stability Across Random Initialisations", fontsize=12)
+    ax.set_xticks(k_arr)
+    ax.grid(True, alpha=0.3)
     fig.tight_layout()
     savefig(fig, os.path.join(out_dir, "hmm_ari_stability_6way.png"), dpi=dpi)
 
-    # ── 3c: LOO per-fold ─────────────────────────────────────────────────────
+    # ── LOO per-fold ─────────────────────────────────────────────────────────
     n_folds = loo_all.shape[1] if loo_all.ndim > 1 else 0
     if n_folds > 1:
-        fig, ax = plt.subplots(figsize=(9, 5))
+        fig, ax = plt.subplots(figsize=(8, 6))
         for fold in range(n_folds):
             ax.plot(k_arr, loo_all[:, fold], "o--", lw=1, ms=4, alpha=0.6,
-                    label=f"fold {fold}")
+                    label=f"Fold {fold}")
         ax.plot(k_arr[valid], loo_mean[valid], "o-", color="black",
-                lw=2.5, ms=6, label="mean", zorder=5)
-        ax.set_xlabel("k", fontsize=12)
-        ax.set_ylabel("Held-out LL/obs", fontsize=12)
-        ax.set_title("LOO-CV per fold (6-way)", fontsize=12)
+                lw=2.5, ms=6, label="Mean", zorder=5)
+        ax.set_xlabel("Number of States ($k$)", fontsize=12)
+        ax.set_ylabel("Held-Out Log-Likelihood per Observation", fontsize=12)
+        ax.set_title("LOO-CV Log-Likelihood per Fold", fontsize=12)
         ax.set_xticks(k_arr)
         ax.legend(fontsize=8, ncol=min(n_folds, 5))
         ax.grid(True, alpha=0.3)
@@ -553,7 +535,7 @@ def _state_strip(state_seq, start_dates, end_dates, k, out_path, dpi):
     colors    = [TAB10[s % 10] for s in state_seq]
     mid_dates = [s + (e - s) / 2 for s, e in zip(start_dates, end_dates)]
 
-    fig, ax = plt.subplots(figsize=(14, 3))
+    fig, ax = plt.subplots(figsize=(8, 3))
 
     ax.scatter(x_vals, state_seq, c=colors, s=80, zorder=3,
                edgecolors="white", linewidths=0.5)
@@ -575,7 +557,7 @@ def _state_strip(state_seq, start_dates, end_dates, k, out_path, dpi):
     ax.set_yticklabels([f"State {i}" for i in range(k_plot)], fontsize=9)
     ax.set_ylabel("HMM State", fontsize=11)
     ax.set_xlabel("Window (chronological)", fontsize=11)
-    ax.set_title(f"Viterbi State Sequence — seed centroid  (k={k}, 6-way)", fontsize=12)
+    ax.set_title(f"Viterbi State Sequence on Seed Centroid  (k={k}, 6-way)", fontsize=12)
     ax.grid(axis="x", alpha=0.3, linestyle=":")
     ax.set_xlim(-0.5, n_win - 0.5)
     ax.set_ylim(-0.5, k_plot - 0.5)
@@ -756,7 +738,7 @@ def _f1_vs_distance(summary_df, out_path, dpi):
     df["distance"] = df["distance"].astype(int)
     df = df.sort_values("distance")
 
-    fig, ax = plt.subplots(figsize=(9, 5))
+    fig, ax = plt.subplots(figsize=(8, 6))
     for kind, color, label in [
         ("within", COLORS_WA["within"], "Within-state"),
         ("across", COLORS_WA["across"], "Across-state"),
@@ -768,9 +750,9 @@ def _f1_vs_distance(summary_df, out_path, dpi):
         ax.plot(d, m, color=color, lw=2, marker="o", ms=4, label=label)
         ax.fill_between(d, lo, hi, color=color, alpha=0.15)
 
-    ax.set_xlabel("Temporal distance |i − j| (windows)", fontsize=12)
+    ax.set_xlabel("Temporal Distance |i − j| (windows)", fontsize=12)
     ax.set_ylabel("Macro F1", fontsize=12)
-    ax.set_title("Cross-window F1 vs. temporal distance\nsplit by HMM state membership",
+    ax.set_title("Cross-Window F1 vs. Temporal Distance\nSplit by HMM State Membership",
                  fontsize=13)
     ax.legend(fontsize=11); ax.grid(True, alpha=0.3, ls="--")
     fig.tight_layout()
@@ -785,14 +767,14 @@ def _distance_conditioned_null(null_npz_path, out_path, dpi):
     observed_gap = float(d["observed_gap"])
     p_value      = float(np.mean(null_gaps >= observed_gap))
 
-    fig, ax = plt.subplots(figsize=(8, 5))
+    fig, ax = plt.subplots(figsize=(6, 4))
     ax.hist(null_gaps, bins=60, color="#94A3B8", edgecolor="white",
             lw=0.3, alpha=0.85, label="Label-shuffle null")
     ax.axvline(observed_gap, color="#DC2626", lw=2.5,
                label=f"Observed gap = {observed_gap:.4f}  (p = {p_value:.4f})")
-    ax.set_xlabel("Within − across F1 gap", fontsize=12)
+    ax.set_xlabel("Within − Across F1 Gap", fontsize=12)
     ax.set_ylabel("Count", fontsize=12)
-    ax.set_title("Distance-conditioned permutation test", fontsize=13)
+    ax.set_title("Distance-Conditioned Permutation Test", fontsize=13)
     ax.legend(fontsize=11); ax.grid(True, alpha=0.3, ls="--")
     fig.tight_layout()
     savefig(fig, out_path, dpi=dpi)
@@ -841,51 +823,42 @@ def _statepair_heatmap(f1_matrix, valid_ids_f1, state_seq, window_ids_dec,
 
 def _f1_heatmap_with_states(f1_matrix, valid_ids_f1, state_seq, window_ids_dec,
                              k, out_path, dpi):
-    """Full F1 heatmap in natural window order, with state-colour strips on the margins."""
-    wid_to_state = dict(zip(window_ids_dec, state_seq))
+    """Full F1 heatmap in natural window order, with state boundaries marked."""
+    wid_to_state = {w: s for w, s in zip(window_ids_dec, state_seq)}
     valid_arr    = np.array(valid_ids_f1)
-    states_for_v = np.array([wid_to_state.get(w, -1) for w in valid_arr])
-    n = len(valid_arr)
+    N            = len(valid_arr)
+    states_valid = np.array([wid_to_state.get(w, -1) for w in valid_arr])
 
     plot_mat = f1_matrix.copy().astype(float)
     np.fill_diagonal(plot_mat, np.nan)
 
-    fig, ax = plt.subplots(figsize=(max(7, n * 0.35), max(6, n * 0.35)))
+    fig, ax = plt.subplots(figsize=(8, 6))
+
     im = ax.imshow(plot_mat, aspect="auto", cmap="RdYlGn",
-                   vmin=np.nanmin(plot_mat), vmax=np.nanmax(plot_mat))
-    plt.colorbar(im, ax=ax, label="Macro F1")
+                   vmin=np.nanmin(plot_mat), vmax=np.nanmax(plot_mat),
+                   extent=[-0.5, N - 0.5, N - 0.5, -0.5])
+    plt.colorbar(im, ax=ax, label="Macro F1", fraction=0.035, pad=0.02)
 
-    for i, (wid, s) in enumerate(zip(valid_arr, states_for_v)):
-        if s < 0:
-            continue
-        c = TAB10[s % 10]
-        ax.axvspan(i - 0.5, i + 0.5, ymin=1.0, ymax=1.025,
-                   color=c, alpha=0.9, clip_on=False)
-        ax.axhspan(i - 0.5, i + 0.5, xmin=-0.025, xmax=0.0,
-                   color=c, alpha=0.9, clip_on=False)
+    # ── State boundary lines ──────────────────────────────────────────────────
+    boundaries = [i - 0.5 for i in range(1, N)
+                  if states_valid[i] != states_valid[i - 1]
+                  and states_valid[i] >= 0 and states_valid[i - 1] >= 0]
+    for b in boundaries:
+        for spine in (
+            dict(color="white",   lw=2.5, ls="-", alpha=1.0, zorder=3),
+            dict(color="#1a1a1a", lw=1.2, ls="-", alpha=1.0, zorder=4),
+        ):
+            ax.axvline(b, **spine)
+            ax.axhline(b, **spine)
 
-    for i in np.where(np.diff(states_for_v) != 0)[0]:
-        ax.axvline(i + 0.5, color="black", lw=1.2, ls="--", alpha=0.6)
-        ax.axhline(i + 0.5, color="black", lw=1.2, ls="--", alpha=0.6)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_xlabel("Test Window", fontsize=11)
+    ax.set_ylabel("Train Window", fontsize=11)
+    ax.set_title("Cross-Window Macro F1", fontsize=12)
 
-    legend_patches = [mpatches.Patch(color=TAB10[s % 10], label=f"State {s}")
-                      for s in range(k)]
-    ax.legend(handles=legend_patches, title="HMM state", fontsize=8,
-              loc="lower right", framealpha=0.8)
-
-    tick_step = max(1, n // 20)
-    ticks     = list(range(0, n, tick_step))
-    ax.set_xticks(ticks)
-    ax.set_xticklabels([f"W{valid_arr[t]:03d}" for t in ticks], rotation=90, fontsize=6)
-    ax.set_yticks(ticks)
-    ax.set_yticklabels([f"W{valid_arr[t]:03d}" for t in ticks], fontsize=6)
-    ax.set_xlabel("Test window", fontsize=11)
-    ax.set_ylabel("Train window", fontsize=11)
-    ax.set_title(f"Cross-window macro F1 — annotated by HMM state (k={k}, 6-way)",
-                 fontsize=12)
     fig.tight_layout()
     savefig(fig, out_path, dpi=dpi)
-
 
 def run_per_k(k, hmm_dir, perf_dir, wa_dir, manifest_path, out_dir, dpi):
     print(f"\n{'═'*60}")
