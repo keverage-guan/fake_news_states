@@ -959,7 +959,7 @@ def figure_equal_segmentation(k, eq_dir, k_out, dpi):
             strat_hmm = strat[strat["method"] == "HMM"].copy()
             strat_eq  = strat[strat["method"] == "equal_duration"].copy()
 
-            fig, axes = plt.subplots(1, 2, figsize=(14, 5), sharey=True)
+            fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharey=True)
             for ax, s, label, color in [
                 (axes[0], strat_hmm, "HMM Segmentation",           COLORS_EQ["hmm"]),
                 (axes[1], strat_eq,  "Equal-Duration Segmentation", COLORS_EQ["equal"]),
@@ -980,14 +980,14 @@ def figure_equal_segmentation(k, eq_dir, k_out, dpi):
                 ax.fill_between(d, s["within_mean"].values, s["across_mean"].values,
                                 alpha=0.10, color=color)
                 ax.set_title(label, fontsize=12)
-                ax.set_xlabel("Temporal Distance |i − j| (Windows)", fontsize=11)
+                ax.set_xlabel("Temporal Distance |i − j| (Windows)", fontsize=12)
                 ax.set_xlim(min(common) - 0.5, max(common) + 0.5)
                 ax.legend(fontsize=10)
                 ax.grid(True, alpha=0.3, linestyle="--")
-            axes[0].set_ylabel("Macro F1", fontsize=11)
+            axes[0].set_ylabel("Macro F1", fontsize=12)
             fig.suptitle(
                 "Within- vs. Across-Group Macro F1 by Temporal Lag",
-                fontsize=12)
+                fontsize=14)
             fig.tight_layout()
             savefig(fig, os.path.join(k_out, "eq_f1_vs_distance_both.png"), dpi=dpi)
         except Exception as e:
@@ -1078,7 +1078,7 @@ def figure_equal_segmentation(k, eq_dir, k_out, dpi):
             p_hmm    = float(hmm_row["dc_shuffle_p"])
             p_eq     = float(eq_row["dc_shuffle_p"])
 
-            fig, axes = plt.subplots(1, 2, figsize=(13, 4), sharey=False)
+            fig, axes = plt.subplots(1, 2, figsize=(12, 4), sharey=False)
 
             for ax, null_arr, obs, p, title in [
                 (axes[0], null_hmm_arr, obs_hmm, p_hmm, "HMM Segmentation"),
@@ -1092,15 +1092,15 @@ def figure_equal_segmentation(k, eq_dir, k_out, dpi):
                            label=f"Observed = {obs:+.4f}\np = {p:.4f}")
                 ax.axvline(pct95, color="black", lw=1.2, linestyle="--",
                            alpha=0.7, label=f"Null 95th Pct = {pct95:.4f}")
-                ax.set_xlabel("Distance-Conditioned Within-Across F1 Gap", fontsize=11)
-                ax.set_ylabel("Count", fontsize=11)
-                ax.set_title(title, fontsize=12)
+                ax.set_xlabel("Distance-Conditioned Within-Across F1 Gap", fontsize=14)
+                ax.set_ylabel("Count", fontsize=12)
+                ax.set_title(title, fontsize=14)
                 ax.legend(fontsize=9)
                 ax.grid(True, alpha=0.3, linestyle="--")
 
             fig.suptitle(
                 "Distance-Conditioned Shuffle Tests: HMM vs. Equal-Duration Segmentation",
-                fontsize=12,
+                fontsize=16,
             )
             fig.tight_layout()
             savefig(fig, os.path.join(k_out, "eq_individual_perm_tests.png"), dpi=dpi)
