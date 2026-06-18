@@ -1,0 +1,10 @@
+group,n,mean_jsd,var_jsd
+within-state,90,0.00883,0.00010
+across-state,505,0.11198,0.00766
+state_0_within,28,0.00289,0.00000
+state_1_within,15,0.01296,0.00010
+state_2_within,3,0.01078,0.00006
+state_3_within,6,0.00094,0.00000
+state_4_within,0,,
+state_5_within,28,0.01550,0.00016
+state_6_within,10,0.00477,0.00001
