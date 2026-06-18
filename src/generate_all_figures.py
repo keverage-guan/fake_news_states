@@ -116,6 +116,9 @@ def parse_args():
     p.add_argument("--eq_dir",   default="data/check_equal_windows",
                    help="Root dir written by check_equal_windows.py  "
                         "(sub-dirs k{k}/ expected)")
+    p.add_argument("--corr_dir", default="data/state_pair_correlation",
+                   help="Root dir written by state_pair_correlation.py  "
+                        "(sub-dirs k{k}/ expected)")
     return p.parse_args()
 
 
@@ -644,7 +647,6 @@ def _timeline_with_classes(dec, manifest_path, k, out_path, dpi):
     window_ids = dec["window_ids"].astype(int)
     CLS_COLS   = [f"cls_{i}" for i in range(6)]
 
-    # Load manifest; need cls_* columns
     mdf = None
     for mpath in [manifest_path,
                   manifest_path.replace("HMM_windows_manifest.csv", "manifest.csv"),
@@ -695,52 +697,83 @@ def _timeline_with_classes(dec, manifest_path, k, out_path, dpi):
         else:
             props.append([0.0] * N_WAY)
 
-    props_arr = np.array(props)   # (N, 6)
+    props_arr = np.array(props)
     N         = len(window_ids)
     runs      = contiguous_runs(state_seq)
 
+    # ── Chronological state relabelling ─────────────────────────────────────
+    seen_order = {}
+    for state, _, _ in runs:
+        if state not in seen_order:
+            seen_order[state] = len(seen_order) + 1
+
+    def chron_label(state):
+        return seen_order[state]
+
+    # ── Estimate window width to avoid clipping the last state ──────────────
+    # Use the median gap between consecutive window start dates.
+    mpl_starts = [date_to_mpl(s) for s in starts]
+    if N > 1:
+        gaps = [mpl_starts[i + 1] - mpl_starts[i] for i in range(min(N - 1, 20))]
+        window_width = float(np.median(gaps))
+    else:
+        window_width = 60.0  # fallback: 60 days in matplotlib date units
+
+    def run_right(e_idx):
+        """Right edge of a run in matplotlib date units."""
+        if e_idx + 1 < N:
+            return mpl_starts[e_idx + 1]
+        return mpl_starts[-1] + window_width  # extend last run by one window
+
     fig, (ax_bar, ax_stack) = plt.subplots(
-        2, 1, figsize=(14, 6),
-        gridspec_kw={"height_ratios": [1, 4]},
+        2, 1, figsize=(8, 5),
+        gridspec_kw={"height_ratios": [1, 9]},
         sharex=False,
     )
 
-    # ── Top panel: state colour bar ──────────────────────────────────────────
+    # ── Top panel: state colour bar ─────────────────────────────────────────
     for state, s_idx, e_idx in runs:
-        left  = date_to_mpl(starts[s_idx])
-        right = date_to_mpl(starts[min(e_idx + 1, N - 1)])
-        ax_bar.barh(0, right - left, left=left, height=0.8,
-                    color=TAB10[state % 10], alpha=0.9, linewidth=0)
+        left  = mpl_starts[s_idx]
+        right = run_right(e_idx)
+        label = chron_label(state)
+        ax_bar.barh(0, right - left, left=left, height=1,
+                    color=plt.cm.tab10.colors[(label - 1) % 10], alpha=0.9, linewidth=0)
         mid = (left + right) / 2
-        ax_bar.text(mid, 0, f"S{state}", ha="center", va="center",
+        ax_bar.text(mid, 0, f"{label}", ha="center", va="center",
                     fontsize=8, fontweight="bold", color="white")
     ax_bar.set_yticks([]); ax_bar.set_xticks([])
-    ax_bar.set_title(f"HMM state sequence and 6-way class composition  (k={k})",
-                     fontsize=12)
-    ax_bar.set_xlim(date_to_mpl(starts[0]), date_to_mpl(starts[-1]))
+    ax_bar.set_title(
+        f"HMM Latent State Sequence and Six-Class Composition ($K={k}$)",
+        fontsize=12,
+    )
+    ax_bar.set_xlim(mpl_starts[0], mpl_starts[-1] + window_width)
     ax_bar.set_ylim(-0.6, 0.6)
 
-    # ── Bottom panel: stacked class proportions ───────────────────────────────
+        # ── Bottom panel: stacked class proportions ──────────────────────────────
     x_dates = [mdates.date2num(s.to_pydatetime()) for s in starts]
-    order   = np.argsort(props_arr.mean(axis=0))[::-1]
-    bottom  = np.zeros(N)
+
+    # Extend by one synthetic point so fill_between covers the last window
+    x_dates_ext = x_dates + [x_dates[-1] + window_width]
+    props_ext   = np.vstack([props_arr, props_arr[-1:]])
+
+    order  = np.argsort(props_arr.mean(axis=0))[::-1]
+    bottom = np.zeros(len(x_dates_ext))
     for ci in order:
-        y = props_arr[:, ci]
-        ax_stack.fill_between(x_dates, bottom, bottom + y,
+        y = props_ext[:, ci]
+        ax_stack.fill_between(x_dates_ext, bottom, bottom + y,
                               color=CLASS_COLORS[ci], alpha=0.85,
                               label=CLASS_NAMES[ci], step=None)
-        ax_stack.plot(x_dates, bottom + y, color="white", lw=0.3, alpha=0.5)
+        ax_stack.plot(x_dates_ext, bottom + y, color="white", lw=0.3, alpha=0.5)
         bottom += y
 
-    # Vertical dashed lines at state boundaries
     for _, _, e_idx in runs[:-1]:
         if e_idx + 1 < N:
-            ax_stack.axvline(date_to_mpl(starts[e_idx + 1]),
+            ax_stack.axvline(mpl_starts[e_idx + 1],
                              color="black", lw=1.0, ls="--", alpha=0.5, zorder=5)
 
-    ax_stack.set_xlim(x_dates[0], x_dates[-1])
+    ax_stack.set_xlim(x_dates_ext[0], x_dates_ext[-1])
     ax_stack.set_ylim(0, 1)
-    ax_stack.set_ylabel("Class proportion", fontsize=11)
+    ax_stack.set_ylabel("Class Proportion", fontsize=11)
     ax_stack.set_xlabel("Date", fontsize=11)
     ax_stack.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
     ax_stack.xaxis.set_major_locator(mdates.MonthLocator(interval=6))
@@ -1006,18 +1039,15 @@ def figure_equal_segmentation(k, eq_dir, k_out, dpi):
             p_direct     = float(p_direct_row["dc_shuffle_p"])
             pct95        = np.percentile(null_diffs, 95)
 
-            fig, ax = plt.subplots(figsize=(7, 4))
+            fig, ax = plt.subplots(figsize=(6, 4))
             ax.hist(null_diffs, bins=60, color="#94A3B8", edgecolor="white",
-                    linewidth=0.3, alpha=0.85, label="Null Distribution\n(HMM Labels Permuted)")
+                    linewidth=0.3, alpha=0.85, label="HMM label-shuffle null)")
             ax.axvline(obs_diff, color="#DC2626", lw=2.5,
-                       label=f"Observed \u0394gap = {obs_diff:+.4f}   (p = {p_direct:.4f})")
-            ax.axvline(pct95, color="black", lw=1.2, linestyle="--", alpha=0.7,
-                       label=f"Null 95th Percentile = {pct95:.4f}")
+                       label=f"Observed gap = {obs_diff:+.4f}   (p = {p_direct:.4f})")
             ax.set_xlabel("HMM Pooled Gap \u2212 Equal-Duration Pooled Gap", fontsize=12)
             ax.set_ylabel("Count", fontsize=12)
             ax.set_title(
-                f"Direct Permutation Test: HMM vs. Equal-Duration Generalisation Gap"
-                f"  ({len(null_diffs):,} permutations)",
+                f"Direct Permutation Test: HMM vs. Equal-Duration Generalisation Gap",
                 fontsize=12,
             )
             ax.legend(fontsize=10)
@@ -1110,12 +1140,162 @@ def figure_equal_segmentation(k, eq_dir, k_out, dpi):
         print(f"    [skip] eq_individual_perm_tests — null_hmm.npy or null_eq.npy not found "
               f"(re-run check_equal_windows.py to generate them)")
 
+# ═════════════════════════════════════════════════════════════════════════════
+# STATE-PAIR CORRELATION FIGURES
+#   Reads pre-computed data written by state_pair_correlation.py under
+#   --corr_dir/k{k}/.  Regenerates, with publication styling:
+#     k{k}/plot_f1_vs_jsd.png        — F1 vs Jensen–Shannon divergence
+#     k{k}/plot_f1_vs_pca_dist.png   — F1 vs PCA centroid distance
+#     k{k}/plot_correlation_null.png — permutation null distributions
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _fmt_p(p):
+    """Format a permutation p-value for display (4 decimals)."""
+    return "" if p is None else f"p = {p:.4f}"
+
+
+def _corr_scatter(x, y, state_i, k, xlabel, ylabel, title,
+                  r, p_perm, out_path, dpi):
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    # OLS trend line — stats ride along in its legend label
+    mask = ~(np.isnan(x) | np.isnan(y))
+    ols_line = None
+    if mask.sum() >= 3:
+        coeffs = np.polyfit(x[mask], y[mask], 1)
+        xr = np.linspace(x[mask].min(), x[mask].max(), 200)
+        ols_line, = ax.plot(xr, np.polyval(coeffs, xr),
+                            color="#334155", lw=1.6, zorder=2)
+
+    # Build the statistics string (legend entry)
+    stat_txt = None
+    if r is not None:
+        stat_txt = rf"$\rho$ = {r:+.3f}"
+
+    handles = []
+    if ols_line is not None:
+        ols_line.set_label("Least squares" if stat_txt is None
+                           else f"Least squares ({stat_txt})")
+        handles.append(ols_line)
+    elif stat_txt is not None:
+        handles.append(mlines.Line2D([], [], color="none", label=stat_txt))
+
+    # Points coloured by train-state
+    for xi, yi, si in zip(x, y, state_i):
+        ax.scatter(xi, yi, color=STATE_PALETTE[int(si) % len(STATE_PALETTE)],
+                   s=70, zorder=3, edgecolors="white", linewidths=0.8)
+
+    # State legend
+    state_handles = [
+        mlines.Line2D([], [], marker="o", color="white",
+                      markerfacecolor=STATE_PALETTE[s % len(STATE_PALETTE)],
+                      markeredgecolor="white", markersize=8, label=f"State {s}")
+        for s in range(k)
+    ]
+    leg = ax.legend(handles=handles + state_handles, title="Train state",
+                    fontsize=12, title_fontsize=12, loc="upper right",
+                    framealpha=0.92, ncol=1 if k <= 4 else 2)
+    leg._legend_box.align = "left"
+
+    ax.set_xlabel(xlabel, fontsize=14)
+    ax.set_ylabel(ylabel, fontsize=14)
+    ax.set_title(title, fontsize=16, pad=10)
+    ax.grid(True, alpha=0.25, ls="--", lw=0.6)
+    ax.spines[["top", "right"]].set_visible(False)
+    fig.tight_layout()
+    savefig(fig, out_path, dpi=dpi)
+
+
+def _corr_null_plot(null_jsd, obs_jsd, p_jsd,
+                    null_pca, obs_pca, p_pca, out_path, dpi):
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=True)
+
+    for ax, null, obs, p, measure in [
+        (axes[0], null_jsd, obs_jsd, p_jsd, "Jensen–Shannon divergence"),
+        (axes[1], null_pca, obs_pca, p_pca, "PCA centroid distance"),
+    ]:
+        null = np.asarray(null, dtype=float)
+        ax.hist(null, bins=50, color="#94A3B8", edgecolor="white",
+                lw=0.3, alpha=0.85, label="Permutation null")
+        ax.axvline(obs, color="#DC2626", lw=2.2,
+                   label=rf"Observed $\rho$ = {obs:+.3f}, {_fmt_p(p)}")
+        pct5 = np.percentile(null, 5)
+        ax.axvline(pct5, color="#1f2937", lw=1.1, ls="--", alpha=0.7,
+                   label=f"Null 5th pct = {pct5:+.3f}")
+        ax.set_xlabel(r"Spearman $\rho$", fontsize=14)
+        ax.set_title(f"F1 vs. {measure}", fontsize=14)
+        ax.grid(True, axis="y", alpha=0.25, ls="--", lw=0.6)
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.legend(fontsize=8, loc="upper right", framealpha=0.92)
+
+    axes[0].set_ylabel("Frequency", fontsize=12)
+    fig.suptitle("Permutation Tests: State-Pair Dissimilarity vs. Generalization",
+                 fontsize=16)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    savefig(fig, out_path, dpi=dpi)
+
+
+def figure_state_pair_correlation(k, corr_dir, k_out, dpi):
+    banner(f"  State-pair correlation figures  (k={k})")
+
+    src      = os.path.join(corr_dir, f"k{k}")
+    pair_csv = os.path.join(src, "statepair_f1.csv")
+    corr_csv = os.path.join(src, "correlation_results.csv")
+    null_npz = os.path.join(src, "correlation_null.npz")
+
+    if not os.path.exists(pair_csv):
+        print(f"    [skip] all state-pair correlation figures — {pair_csv} not found")
+        return
+
+    df  = pd.read_csv(pair_csv)
+    f1  = df["mean_f1"].values
+    jsd = df["jsd"].values
+    pca = df["pca_dist"].values
+    si  = df["state_i"].values
+
+    # Spearman r + permutation p for annotations (from correlation_results.csv)
+    r_jsd = r_pca = p_jsd = p_pca = None
+    if os.path.exists(corr_csv):
+        cdf = pd.read_csv(corr_csv).set_index("measure")
+        if "JSD" in cdf.index:
+            r_jsd, p_jsd = float(cdf.loc["JSD", "spearman_r"]), float(cdf.loc["JSD", "p_perm"])
+        if "PCA_dist" in cdf.index:
+            r_pca, p_pca = float(cdf.loc["PCA_dist", "spearman_r"]), float(cdf.loc["PCA_dist", "p_perm"])
+
+    _corr_scatter(
+        jsd, f1, si, k,
+        xlabel="Jensen–Shannon divergence between class distributions",
+        ylabel="Mean cross-window macro F1",
+        title="Transfer Performance vs. Class-Distribution Dissimilarity",
+        r=r_jsd, p_perm=p_jsd,
+        out_path=os.path.join(k_out, "plot_f1_vs_jsd.png"), dpi=dpi)
+
+    _corr_scatter(
+        pca, f1, si, k,
+        xlabel="Euclidean distance between PCA centroids (z-scored space)",
+        ylabel="Mean cross-window macro F1",
+        title="Transfer Performance vs. Weight-Space Dissimilarity",
+        r=r_pca, p_perm=p_pca,
+        out_path=os.path.join(k_out, "plot_f1_vs_pca_dist.png"), dpi=dpi)
+
+    if os.path.exists(null_npz):
+        nd = np.load(null_npz, allow_pickle=True)
+        _corr_null_plot(
+            null_jsd=nd["null_jsd"], obs_jsd=float(nd["obs_jsd"]), p_jsd=float(nd["p_jsd"]),
+            null_pca=nd["null_pca"], obs_pca=float(nd["obs_pca"]), p_pca=float(nd["p_pca"]),
+            out_path=os.path.join(k_out, "plot_correlation_null.png"), dpi=dpi)
+    else:
+        print(f"    [skip] plot_correlation_null — {null_npz} not found "
+              f"(re-run state_pair_correlation.py to save it)")
 
 # ═════════════════════════════════════════════════════════════════════════════
 # PER-K
 # ═════════════════════════════════════════════════════════════════════════════
 
-def run_per_k(k, hmm_dir, perf_dir, wa_dir, manifest_path, out_dir, eq_dir, dpi):
+def run_per_k(k, hmm_dir, perf_dir, wa_dir, manifest_path, out_dir, eq_dir, corr_dir, dpi):
     print(f"\n{'═'*60}")
     print(f"  Generating figures for k = {k}")
     print(f"{'═'*60}")
@@ -1180,6 +1360,8 @@ def run_per_k(k, hmm_dir, perf_dir, wa_dir, manifest_path, out_dir, eq_dir, dpi)
 
     # Equal-segmentation figures (reads pre-computed data from check_equal_windows.py)
     figure_equal_segmentation(k, eq_dir, k_out, dpi)
+    # State-pair correlation figures (reads pre-computed data from state_pair_correlation.py)
+    figure_state_pair_correlation(k, corr_dir, k_out, dpi)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1208,7 +1390,7 @@ def main():
     # Per-k figures (including equal-segmentation)
     for k in args.k:
         run_per_k(k, args.hmm_dir, args.perf_dir, args.wa_dir,
-                  args.manifest, args.output_dir, args.eq_dir, args.dpi)
+                  args.manifest, args.output_dir, args.eq_dir, args.corr_dir, args.dpi)
 
     print(f"\n{'═'*60}")
     print(f"  Done.  All figures in: {args.output_dir}/")

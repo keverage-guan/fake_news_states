@@ -353,6 +353,17 @@ def main():
     corr_df.to_csv(corr_path, index=False)
     print(f"\n  Saved: {corr_path}")
 
+    np.savez(
+        os.path.join(args.output_dir, "correlation_null.npz"),
+        null_jsd=res_jsd["null_r"],
+        null_pca=res_pca["null_r"],
+        obs_jsd=res_jsd["r"],
+        obs_pca=res_pca["r"],
+        p_jsd=res_jsd["p_perm"],
+        p_pca=res_pca["p_perm"],
+    )
+    print(f"  Saved: {os.path.join(args.output_dir, 'correlation_null.npz')}")
+
     # ── Plots ──────────────────────────────────────────────────────────────
     scatter_plot(
         x=jsd_vals, y=f1_vals,
