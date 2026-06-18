@@ -1,0 +1,6 @@
+analysis,term,estimate,p_one_sided,p_two_sided
+combined_model,beta_JSD,-0.7283491656787741,,
+combined_model,beta_lag,-0.00013922342459078026,,
+combined_model,beta_same_state,0.037223739373755456,0.0,0.0
+two_stage_residual_free,within_minus_across_gap,0.02833341239601432,0.0,
+two_stage_residual_lagstratified,distance_conditioned_gap,0.025785018949545224,0.0,
