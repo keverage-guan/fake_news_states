@@ -119,6 +119,8 @@ def parse_args():
     p.add_argument("--corr_dir", default="data/state_pair_correlation",
                    help="Root dir written by state_pair_correlation.py  "
                         "(sub-dirs k{k}/ expected)")
+    p.add_argument("--jsd_dir",  default="data/jsd_stability",
+                   help="Root of jsd_stability_analysis outputs (subdirs k{k}/)")
     return p.parse_args()
 
 
@@ -511,6 +513,127 @@ def figure_pca_sanity(pca_npz, out_dir, dpi):
     fig.tight_layout()
     savefig(fig, os.path.join(out_dir, "pca_component_selection.png"), dpi=dpi)
 
+# ═════════════════════════════════════════════════════════════════════════════
+# JSD STABILITY FIGURES
+#   Reads pre-computed outputs from jsd_stability_analysis.py under
+#   --jsd_dir/k{k}/.  Regenerates with publication styling:
+#     k{k}/plot_jsd_stability.png      — violin + per-state bar (side by side)
+#     k{k}/plot_jsd_stability_null.png — permutation null + observed Δμ
+# ═════════════════════════════════════════════════════════════════════════════
+
+def figure_jsd_stability(k, jsd_dir, k_out, dpi):
+    banner(f"  JSD stability figures  (k={k})")
+
+    src_dir    = os.path.join(jsd_dir, f"k{k}")
+    csv_path   = os.path.join(src_dir, "jsd_stability_summary.csv")
+    null_path  = os.path.join(src_dir, "jsd_stability_null.npy")
+    within_path = os.path.join(src_dir, "jsd_within.npy")
+    across_path = os.path.join(src_dir, "jsd_across.npy")
+
+    if not os.path.exists(csv_path):
+        print(f"    [skip] all jsd_stability figures — {csv_path} not found "
+              f"(re-run jsd_stability_analysis.py)")
+        return
+
+    df = pd.read_csv(csv_path)
+    within_mean = float(df.loc[df["group"] == "within-state", "mean_jsd"].iloc[0])
+    across_mean = float(df.loc[df["group"] == "across-state", "mean_jsd"].iloc[0])
+
+    state_rows  = df[df["group"].str.match(r"^state_\d+_within$")]
+    k_inferred  = len(state_rows)
+    state_means = state_rows["mean_jsd"].values.astype(float)
+
+    bar_colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
+                  "#9467bd", "#8c564b", "#17becf", "#e377c2"]
+
+    # ── Side-by-side: violin (if raw arrays available) or bar + per-state bars
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
+    ax = axes[0]
+
+    if os.path.exists(within_path) and os.path.exists(across_path):
+        within = np.load(within_path)
+        across = np.load(across_path)
+        colors = ["#2ca02c", "#d62728"]
+        parts = ax.violinplot([within, across], positions=[0, 1],
+                              showmedians=True, showextrema=True)
+        for pc, col in zip(parts["bodies"], colors):
+            pc.set_facecolor(col); pc.set_alpha(0.45)
+        for key in ("cmedians", "cbars", "cmaxes", "cmins"):
+            parts[key].set_color("black")
+        jitter_rng = np.random.default_rng(1)
+        for pos, grp, col in zip([0, 1], [within, across], colors):
+            jit = jitter_rng.uniform(-0.07, 0.07, len(grp))
+            ax.scatter(pos + jit, grp, color=col, alpha=0.4, s=10, zorder=3)
+        n_w, n_a = len(within), len(across)
+    else:
+        ax.bar([0, 1], [within_mean, across_mean],
+               color=["#2ca02c", "#d62728"], alpha=0.75, edgecolor="white")
+        n_w = int(df.loc[df["group"] == "within-state", "n"].iloc[0])
+        n_a = int(df.loc[df["group"] == "across-state", "n"].iloc[0])
+
+    ax.set_xticks([0, 1])
+    ax.set_xticklabels(
+        [f"Within-State\n($n={n_w}$, $\\mu={within_mean:.3f}$)",
+         f"Across-State\n($n={n_a}$, $\\mu={across_mean:.3f}$)"],
+        fontsize=11,
+    )
+    ax.set_ylabel("Pairwise Jensen\u2013Shannon Divergence", fontsize=12)
+    ax.set_title("Within- vs. Across-State Pairwise JSD", fontsize=12)
+    ax.grid(True, axis="y", alpha=0.25, ls="--")
+    ax.spines[["top", "right"]].set_visible(False)
+
+    ax2 = axes[1]
+    ax2.bar(range(k_inferred), state_means,
+            color=[bar_colors[s % len(bar_colors)] for s in range(k_inferred)],
+            alpha=0.75, edgecolor="white")
+    ax2.axhline(within_mean, color="#2ca02c", ls="--", lw=1.5,
+                label=f"Pooled within mean ({within_mean:.3f})")
+    ax2.axhline(across_mean, color="#d62728", ls="--", lw=1.5,
+                label=f"Pooled across mean ({across_mean:.3f})")
+    ax2.set_xticks(range(k_inferred))
+    ax2.set_xticklabels([f"$S_{s}$" for s in range(k_inferred)], fontsize=10)
+    ax2.set_ylabel("Mean Pairwise JSD (Within State)", fontsize=12)
+    ax2.set_title("Per-State Mean Within-State JSD", fontsize=12)
+    ax2.legend(fontsize=9, framealpha=0.85)
+    ax2.grid(True, axis="y", alpha=0.25, ls="--")
+    ax2.spines[["top", "right"]].set_visible(False)
+
+    fig.suptitle(
+        f"JSD Stability: Within- vs. Across-State Window Pairs ($K={k}$)",
+        fontsize=14,
+    )
+    fig.tight_layout()
+    savefig(fig, os.path.join(k_out, "plot_jsd_stability.png"), dpi=dpi)
+
+    # ── Null distribution + observed Δμ ───────────────────────────────────────
+    if not os.path.exists(null_path):
+        print(f"    [skip] plot_jsd_stability_null — {null_path} not found "
+              f"(re-run jsd_stability_analysis.py)")
+        return
+
+    null     = np.load(null_path)
+    obs_diff = across_mean - within_mean
+    p_val    = float((null >= obs_diff).mean())
+    pct95    = np.percentile(null, 95)
+
+    fig2, ax = plt.subplots(figsize=(7, 4.5))
+    ax.hist(null, bins=60, color="#94A3B8", edgecolor="white",
+            linewidth=0.3, alpha=0.85, label="Permutation Null")
+    ax.axvline(obs_diff, color="#DC2626", lw=2.5,
+               label=f"Observed mean difference = {obs_diff:+.4f}  (p = {p_val:.4f})")
+    ax.axvline(pct95, color="#1f2937", lw=1.2, linestyle="--", alpha=0.7,
+               label=f"Null 95th Pct = {pct95:.4f}")
+    ax.set_xlabel("Mean JSD (Across-State) \u2212 Mean JSD (Within-State)", fontsize=13)
+    ax.set_ylabel("Count", fontsize=12)
+    ax.set_title(
+        f"Permutation Test: Across- vs. Within-State JSD ($K={k}$)",
+        fontsize=13,
+    )
+    ax.legend(fontsize=9, framealpha=0.9)
+    ax.grid(True, alpha=0.3, linestyle="--")
+    ax.spines[["top", "right"]].set_visible(False)
+    fig2.tight_layout()
+    savefig(fig2, os.path.join(k_out, "plot_jsd_stability_null.png"), dpi=dpi)
 
 # ═════════════════════════════════════════════════════════════════════════════
 # PER-K HELPER FIGURES
@@ -1295,7 +1418,7 @@ def figure_state_pair_correlation(k, corr_dir, k_out, dpi):
 # PER-K
 # ═════════════════════════════════════════════════════════════════════════════
 
-def run_per_k(k, hmm_dir, perf_dir, wa_dir, manifest_path, out_dir, eq_dir, corr_dir, dpi):
+def run_per_k(k, hmm_dir, perf_dir, wa_dir, manifest_path, out_dir, eq_dir, corr_dir, jsd_dir, dpi):
     print(f"\n{'═'*60}")
     print(f"  Generating figures for k = {k}")
     print(f"{'═'*60}")
@@ -1362,7 +1485,8 @@ def run_per_k(k, hmm_dir, perf_dir, wa_dir, manifest_path, out_dir, eq_dir, corr
     figure_equal_segmentation(k, eq_dir, k_out, dpi)
     # State-pair correlation figures (reads pre-computed data from state_pair_correlation.py)
     figure_state_pair_correlation(k, corr_dir, k_out, dpi)
-
+    # JSD stability figures (reads pre-computed data from jsd_stability_analysis.py)
+    figure_jsd_stability(k, jsd_dir, k_out, dpi)
 
 # ═════════════════════════════════════════════════════════════════════════════
 # MAIN
@@ -1390,7 +1514,8 @@ def main():
     # Per-k figures (including equal-segmentation)
     for k in args.k:
         run_per_k(k, args.hmm_dir, args.perf_dir, args.wa_dir,
-                  args.manifest, args.output_dir, args.eq_dir, args.corr_dir, args.dpi)
+                  args.manifest, args.output_dir, args.eq_dir, args.corr_dir,
+                  args.jsd_dir, args.dpi)
 
     print(f"\n{'═'*60}")
     print(f"  Done.  All figures in: {args.output_dir}/")

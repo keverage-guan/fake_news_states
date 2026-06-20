@@ -104,6 +104,10 @@ def main():
     print(f"Δ mean (across−within) = {obs_diff:+.4f},  "
           f"permutation p = {p_val:.4f}  (N={args.n_perm})")
 
+    null_path = os.path.join(args.output_dir, "jsd_stability_null.npy")
+    np.save(null_path, null)
+    print(f"Saved: {null_path}")
+
     # ── Per-state breakdown ───────────────────────────────────────────────────
     per_state = {}
     for s in range(k):
@@ -132,6 +136,16 @@ def main():
     print(f"Saved: {csv_path}")
 
     # ── Plot ──────────────────────────────────────────────────────────────────
+    # ── Save null array for generate_all_figures.py ───────────────────────────
+    null_path = os.path.join(args.output_dir, "jsd_stability_null.npy")
+    np.save(null_path, null)
+    print(f"Saved: {null_path}")
+
+    # ── Also save raw within/across arrays for violin reconstruction ──────────
+    np.save(os.path.join(args.output_dir, "jsd_within.npy"), within)
+    np.save(os.path.join(args.output_dir, "jsd_across.npy"), across)
+
+    # ── Side-by-side: violin + per-state bars ─────────────────────────────────
     fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
 
     # Left: violin comparison
@@ -149,16 +163,12 @@ def main():
         ax.scatter(pos + jit, grp, color=col, alpha=0.4, s=10, zorder=3)
     ax.set_xticks([0, 1])
     ax.set_xticklabels(
-        [f"Within-state\n(n={len(within)}, μ={within.mean():.3f})",
-         f"Across-state\n(n={len(across)}, μ={across.mean():.3f})"],
-        fontsize=9,
+        [f"Within-State\n($n={len(within)}$, $\\mu={within.mean():.3f}$)",
+         f"Across-State\n($n={len(across)}$, $\\mu={across.mean():.3f}$)"],
+        fontsize=11,
     )
-    ax.set_ylabel("Pairwise JSD", fontsize=10)
-    ax.set_title("Within- vs. across-state\npairwise JSD", fontsize=10)
-    ax.text(0.5, 0.97,
-            f"Δμ = {obs_diff:+.4f},  p = {p_val:.4f}",
-            ha="center", va="top", transform=ax.transAxes, fontsize=8,
-            bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.8))
+    ax.set_ylabel("Pairwise Jensen\u2013Shannon Divergence", fontsize=12)
+    ax.set_title("Within- vs. Across-State Pairwise JSD", fontsize=12)
     ax.grid(True, axis="y", alpha=0.25, ls="--")
     ax.spines[["top", "right"]].set_visible(False)
 
@@ -169,7 +179,7 @@ def main():
     for s in range(k):
         v = per_state[s][~np.isnan(per_state[s])]
         state_means.append(v.mean() if len(v) else np.nan)
-        state_labels.append(f"S{s}")
+        state_labels.append(f"$S_{s}$")
     bar_colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
                   "#9467bd", "#8c564b", "#17becf", "#e377c2"]
     ax2.bar(range(k), state_means,
@@ -180,22 +190,46 @@ def main():
     ax2.axhline(across.mean(), color="#d62728", ls="--", lw=1.5,
                 label=f"Pooled across mean ({across.mean():.3f})")
     ax2.set_xticks(range(k))
-    ax2.set_xticklabels(state_labels, fontsize=9)
-    ax2.set_ylabel("Mean pairwise JSD (within state)", fontsize=10)
-    ax2.set_title("Per-state mean within-state JSD", fontsize=10)
-    ax2.legend(fontsize=8, framealpha=0.85)
+    ax2.set_xticklabels(state_labels, fontsize=10)
+    ax2.set_ylabel("Mean Pairwise JSD (Within State)", fontsize=12)
+    ax2.set_title("Per-State Mean Within-State JSD", fontsize=12)
+    ax2.legend(fontsize=9, framealpha=0.85)
     ax2.grid(True, axis="y", alpha=0.25, ls="--")
     ax2.spines[["top", "right"]].set_visible(False)
 
     fig.suptitle(
-        f"JSD stability: within- vs. across-state window pairs  ($K={k}$)",
-        fontsize=11,
+        f"JSD Stability: Within- vs. Across-State Window Pairs ($K={k}$)",
+        fontsize=14,
     )
     fig.tight_layout()
     plot_path = os.path.join(args.output_dir, "plot_jsd_stability.png")
     fig.savefig(plot_path, dpi=args.dpi, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved: {plot_path}")
+
+    # ── Null distribution + observed Δμ ───────────────────────────────────────
+    fig2, ax = plt.subplots(figsize=(7, 4.5))
+    pct95 = np.percentile(null, 95)
+    ax.hist(null, bins=60, color="#94A3B8", edgecolor="white",
+            linewidth=0.3, alpha=0.85, label="Permutation Null")
+    ax.axvline(obs_diff, color="#DC2626", lw=2.5,
+               label=f"Observed mean difference = {obs_diff:+.4f}  (p = {p_val:.4f})")
+    ax.axvline(pct95, color="#1f2937", lw=1.2, linestyle="--", alpha=0.7,
+               label=f"Null 95th Pct = {pct95:.4f}")
+    ax.set_xlabel("Mean JSD (Across-State) \u2212 Mean JSD (Within-State)", fontsize=13)
+    ax.set_ylabel("Count", fontsize=12)
+    ax.set_title(
+        f"Permutation Test: Across- vs. Within-State JSD ($K={k}$)",
+        fontsize=13,
+    )
+    ax.legend(fontsize=9, framealpha=0.9)
+    ax.grid(True, alpha=0.3, linestyle="--")
+    ax.spines[["top", "right"]].set_visible(False)
+    fig2.tight_layout()
+    null_plot_path = os.path.join(args.output_dir, "plot_jsd_stability_null.png")
+    fig2.savefig(null_plot_path, dpi=args.dpi, bbox_inches="tight")
+    plt.close(fig2)
+    print(f"Saved: {null_plot_path}")
 
 
 if __name__ == "__main__":
