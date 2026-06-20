@@ -492,7 +492,7 @@ def distance_conditioned_residual_test(resid: np.ndarray,
 
 def plot_partial_residual(resid, same_state, output_path):
     """Box/strip of JSD+lag-residualized F1 for within- vs across-state pairs."""
-    fig, ax = plt.subplots(figsize=(5, 4.5))
+    fig, ax = plt.subplots(figsize=(7, 4))
     groups = [resid[same_state == 0], resid[same_state == 1]]
     ax.boxplot(groups, labels=["Across-state", "Within-state"],
                showmeans=True, widths=0.5)
