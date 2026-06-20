@@ -521,7 +521,7 @@ def figure_pca_sanity(pca_npz, out_dir, dpi):
 #     k{k}/plot_jsd_stability_null.png — permutation null + observed Δμ
 # ═════════════════════════════════════════════════════════════════════════════
 
-def figure_jsd_stability(k, jsd_dir, k_out, dpi):
+def figure_jsd_stability(k, jsd_dir, k_out, dpi, state_seq=None):
     banner(f"  JSD stability figures  (k={k})")
 
     src_dir    = os.path.join(jsd_dir, f"k{k}")
@@ -539,7 +539,27 @@ def figure_jsd_stability(k, jsd_dir, k_out, dpi):
     within_mean = float(df.loc[df["group"] == "within-state", "mean_jsd"].iloc[0])
     across_mean = float(df.loc[df["group"] == "across-state", "mean_jsd"].iloc[0])
 
-    state_rows  = df[df["group"].str.match(r"^state_\d+_within$")]
+    import re
+    state_rows = df[df["group"].str.match(r"^state_\d+_within$")].copy()
+    state_rows["native_id"] = (
+        state_rows["group"].str.extract(r"state_(\d+)_within")[0].astype(int)
+    )
+
+    # Build chronological relabeling (native HMM id → 0-based chron index)
+    if state_seq is not None:
+        relabel = {}
+        for s in state_seq:
+            if s not in relabel:
+                relabel[s] = len(relabel)
+        state_rows["chron_id"] = state_rows["native_id"].map(relabel)
+        state_rows = state_rows.sort_values("chron_id").reset_index(drop=True)
+        x_labels = [f"$S_{{{int(row.chron_id)}}}$"
+                    for _, row in state_rows.iterrows()]
+    else:
+        state_rows = state_rows.sort_values("native_id").reset_index(drop=True)
+        x_labels = [f"$S_{{{int(row.native_id)}}}$"
+                    for _, row in state_rows.iterrows()]
+
     k_inferred  = len(state_rows)
     state_means = state_rows["mean_jsd"].values.astype(float)
 
@@ -591,7 +611,7 @@ def figure_jsd_stability(k, jsd_dir, k_out, dpi):
     ax2.axhline(across_mean, color="#d62728", ls="--", lw=1.5,
                 label=f"Pooled across mean ({across_mean:.3f})")
     ax2.set_xticks(range(k_inferred))
-    ax2.set_xticklabels([f"$S_{s}$" for s in range(k_inferred)], fontsize=10)
+    ax2.set_xticklabels(x_labels, fontsize=10)
     ax2.set_ylabel("Mean Pairwise JSD (Within State)", fontsize=12)
     ax2.set_title("Per-State Mean Within-State JSD", fontsize=12)
     ax2.legend(fontsize=9, framealpha=0.85)
@@ -828,7 +848,7 @@ def _timeline_with_classes(dec, manifest_path, k, out_path, dpi):
     seen_order = {}
     for state, _, _ in runs:
         if state not in seen_order:
-            seen_order[state] = len(seen_order) + 1
+            seen_order[state] = len(seen_order)
 
     def chron_label(state):
         return seen_order[state]
@@ -860,7 +880,7 @@ def _timeline_with_classes(dec, manifest_path, k, out_path, dpi):
         right = run_right(e_idx)
         label = chron_label(state)
         ax_bar.barh(0, right - left, left=left, height=1,
-                    color=plt.cm.tab10.colors[(label - 1) % 10], alpha=0.9, linewidth=0)
+                    color=plt.cm.tab10.colors[label % 10], alpha=0.9, linewidth=0)
         mid = (left + right) / 2
         ax_bar.text(mid, 0, f"{label}", ha="center", va="center",
                     fontsize=8, fontweight="bold", color="white")
@@ -1486,7 +1506,7 @@ def run_per_k(k, hmm_dir, perf_dir, wa_dir, manifest_path, out_dir, eq_dir, corr
     # State-pair correlation figures (reads pre-computed data from state_pair_correlation.py)
     figure_state_pair_correlation(k, corr_dir, k_out, dpi)
     # JSD stability figures (reads pre-computed data from jsd_stability_analysis.py)
-    figure_jsd_stability(k, jsd_dir, k_out, dpi)
+    figure_jsd_stability(k, jsd_dir, k_out, dpi, state_seq=state_seq)
 
 # ═════════════════════════════════════════════════════════════════════════════
 # MAIN

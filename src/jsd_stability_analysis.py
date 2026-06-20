@@ -146,7 +146,7 @@ def main():
     np.save(os.path.join(args.output_dir, "jsd_across.npy"), across)
 
     # ── Side-by-side: violin + per-state bars ─────────────────────────────────
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
+    fig, axes = plt.subplots(1, 2, figsize=(6, 2.5))
 
     # Left: violin comparison
     ax = axes[0]
@@ -165,10 +165,10 @@ def main():
     ax.set_xticklabels(
         [f"Within-State\n($n={len(within)}$, $\\mu={within.mean():.3f}$)",
          f"Across-State\n($n={len(across)}$, $\\mu={across.mean():.3f}$)"],
-        fontsize=11,
+        fontsize=12,
     )
-    ax.set_ylabel("Pairwise Jensen\u2013Shannon Divergence", fontsize=12)
-    ax.set_title("Within- vs. Across-State Pairwise JSD", fontsize=12)
+    ax.set_ylabel("Pairwise Jensen\u2013Shannon Divergence", fontsize=13)
+    ax.set_title("Within- vs. Across-State Pairwise JSD", fontsize=13)
     ax.grid(True, axis="y", alpha=0.25, ls="--")
     ax.spines[["top", "right"]].set_visible(False)
 
@@ -190,16 +190,16 @@ def main():
     ax2.axhline(across.mean(), color="#d62728", ls="--", lw=1.5,
                 label=f"Pooled across mean ({across.mean():.3f})")
     ax2.set_xticks(range(k))
-    ax2.set_xticklabels(state_labels, fontsize=10)
-    ax2.set_ylabel("Mean Pairwise JSD (Within State)", fontsize=12)
-    ax2.set_title("Per-State Mean Within-State JSD", fontsize=12)
-    ax2.legend(fontsize=9, framealpha=0.85)
+    ax2.set_xticklabels(state_labels, fontsize=11)
+    ax2.set_ylabel("Mean Pairwise JSD (Within State)", fontsize=13)
+    ax2.set_title("Per-State Mean Within-State JSD", fontsize=13)
+    ax2.legend(fontsize=10, framealpha=0.85)
     ax2.grid(True, axis="y", alpha=0.25, ls="--")
     ax2.spines[["top", "right"]].set_visible(False)
 
     fig.suptitle(
         f"JSD Stability: Within- vs. Across-State Window Pairs ($K={k}$)",
-        fontsize=14,
+        fontsize=15,
     )
     fig.tight_layout()
     plot_path = os.path.join(args.output_dir, "plot_jsd_stability.png")
