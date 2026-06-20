@@ -501,8 +501,9 @@ def plot_partial_residual(resid, same_state, output_path):
         ax.scatter(x, g, s=6, alpha=0.25,
                    color="#DC2626" if i == 1 else "#2563EB")
     ax.axhline(0.0, color="black", lw=0.8, ls="--", alpha=0.6)
-    ax.set_ylabel("F1 residual (after removing JSD + lag)")
-    ax.set_title("JSD+lag-residualized transfer F1\nby state membership")
+    ax.set_ylabel("Macro-F1 Residual (JSD and Lag Removed)")
+    ax.set_title("Within- vs. Across-State Transfer, Controlling\nfor Class Divergence and Temporal Lag")
+    ax.set_xlabel("State Membership")
     ax.grid(True, axis="y", alpha=0.3, ls="--")
     fig.tight_layout()
     fig.savefig(output_path, dpi=150)
@@ -516,17 +517,17 @@ def rng_jitter(n, center, width=0.12, seed=0):
 
 
 def plot_indicator_null(null_coefs, obs_coef, p_one, output_path):
-    fig, ax = plt.subplots(figsize=(6, 4))
+    fig, ax = plt.subplots(figsize=(8, 4))
     ax.hist(null_coefs, bins=60, color="#94A3B8", edgecolor="white",
             lw=0.3, alpha=0.85, label="Freedman-Lane null")
     ax.axvline(obs_coef, color="#DC2626", lw=2.5,
-               label=f"Observed same_state coef = {obs_coef:.4f}\n(p = {p_one:.4f})")
+           label=f"Observed coefficient = {obs_coef:.4f}  (p = {p_one:.4f})")
     ax.axvline(np.percentile(null_coefs, 95), color="black", lw=1.2, ls="--",
-               alpha=0.7, label=f"Null 95th pct = {np.percentile(null_coefs,95):.4f}")
-    ax.set_xlabel("same_state coefficient  (within − across F1, JSD & lag held fixed)")
-    ax.set_ylabel("Count")
-    ax.set_title("Partial test of state membership\n(JSD and lag partialled out)")
-    ax.legend(fontsize=9)
+            alpha=0.7, label=f"Null 95th percentile = {np.percentile(null_coefs, 95):.4f}")
+    ax.set_xlabel("Same-State Coefficient (Macro-F1, JSD and Lag Held Fixed)")
+    ax.set_ylabel("Permutation Count")
+    ax.set_title("Freedman–Lane Test of Latent State Membership\nAfter Partialling Out Class Divergence and Lag")
+    ax.legend(fontsize=9, framealpha=0.85)
     ax.grid(True, alpha=0.3, ls="--")
     fig.tight_layout()
     fig.savefig(output_path, dpi=150)

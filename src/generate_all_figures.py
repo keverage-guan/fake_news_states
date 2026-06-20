@@ -121,6 +121,8 @@ def parse_args():
                         "(sub-dirs k{k}/ expected)")
     p.add_argument("--jsd_dir",  default="data/jsd_stability",
                    help="Root of jsd_stability_analysis outputs (subdirs k{k}/)")
+    p.add_argument("--partial_jsd_dir", default="data/partial_jsd/6way",
+               help="Root of partial_jsd_transfer.py outputs (contains k{k}/ subdirs)")
     return p.parse_args()
 
 
@@ -654,6 +656,50 @@ def figure_jsd_stability(k, jsd_dir, k_out, dpi, state_seq=None):
     ax.spines[["top", "right"]].set_visible(False)
     fig2.tight_layout()
     savefig(fig2, os.path.join(k_out, "plot_jsd_stability_null.png"), dpi=dpi)
+
+def figure_partial_jsd(k, partial_jsd_dir, k_out, dpi):
+    """
+    Re-render the two partial-JSD figures from pre-computed .npz output
+    of partial_jsd_transfer.py.
+    """
+    banner(f"Partial-JSD transfer figures  (k={k})")
+    k_in  = os.path.join(partial_jsd_dir, f"k{k}")
+    os.makedirs(k_out, exist_ok=True)
+
+    null_path = os.path.join(k_in, "partial_jsd_null.npz")
+    if not os.path.exists(null_path):
+        print(f"    [skip] partial_jsd figures — {null_path} not found")
+        return
+
+    d = np.load(null_path)
+
+    # ── Plot 1: JSD+lag-residualised F1 by state membership ──────────────
+    pair_path = os.path.join(k_in, "window_pair_table.csv")
+    if os.path.exists(pair_path):
+        df = pd.read_csv(pair_path)
+        # Reconstruct residuals from saved betas
+        beta = d["beta_full"]          # [intercept, jsd, lag, same_state]
+        X = np.column_stack([
+            np.ones(len(df)),
+            df["jsd"].values,
+            df["lag"].values,
+            df["same_state"].values,
+        ])
+        resid = df["f1"].values - X[:, :3] @ beta[:3]  # remove JSD+lag, keep state
+        same_state = df["same_state"].values.astype(int)
+
+        from partial_jsd_transfer import plot_partial_residual
+        plot_partial_residual(
+            resid, same_state,
+            os.path.join(k_out, "partial_jsd_residual.png"))
+    else:
+        print(f"    [skip] partial_jsd_residual — {pair_path} not found")
+
+    # ── Plot 2: Freedman-Lane null histogram ─────────────────────────────
+    from partial_jsd_transfer import plot_indicator_null
+    plot_indicator_null(
+        d["fl_null"], float(d["fl_obs"]), float(d["fl_p_one"]),
+        os.path.join(k_out, "partial_jsd_indicator_null.png"))
 
 # ═════════════════════════════════════════════════════════════════════════════
 # PER-K HELPER FIGURES
@@ -1438,7 +1484,8 @@ def figure_state_pair_correlation(k, corr_dir, k_out, dpi):
 # PER-K
 # ═════════════════════════════════════════════════════════════════════════════
 
-def run_per_k(k, hmm_dir, perf_dir, wa_dir, manifest_path, out_dir, eq_dir, corr_dir, jsd_dir, dpi):
+def run_per_k(k, hmm_dir, perf_dir, wa_dir, manifest_path,
+              out_dir, eq_dir, corr_dir, jsd_dir, partial_jsd_dir, dpi):
     print(f"\n{'═'*60}")
     print(f"  Generating figures for k = {k}")
     print(f"{'═'*60}")
@@ -1508,6 +1555,9 @@ def run_per_k(k, hmm_dir, perf_dir, wa_dir, manifest_path, out_dir, eq_dir, corr
     # JSD stability figures (reads pre-computed data from jsd_stability_analysis.py)
     figure_jsd_stability(k, jsd_dir, k_out, dpi, state_seq=state_seq)
 
+    # Partial-JSD transfer figures  ← ADD THIS
+    figure_partial_jsd(k, partial_jsd_dir, k_out, dpi)
+
 # ═════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1534,8 +1584,8 @@ def main():
     # Per-k figures (including equal-segmentation)
     for k in args.k:
         run_per_k(k, args.hmm_dir, args.perf_dir, args.wa_dir,
-                  args.manifest, args.output_dir, args.eq_dir, args.corr_dir,
-                  args.jsd_dir, args.dpi)
+          args.manifest, args.output_dir, args.eq_dir, args.corr_dir,
+          args.jsd_dir, args.partial_jsd_dir, args.dpi)
 
     print(f"\n{'═'*60}")
     print(f"  Done.  All figures in: {args.output_dir}/")
