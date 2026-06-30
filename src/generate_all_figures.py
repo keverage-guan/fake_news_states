@@ -99,8 +99,8 @@ def parse_args():
     p = argparse.ArgumentParser(
         description="Regenerate all saved-data figures for 6-way HMM analysis."
     )
-    p.add_argument("--k", nargs="+", type=int, default=[7, 8],
-                   help="HMM state counts to plot  (default: 7 8)")
+    p.add_argument("--k", nargs="+", type=int, default=[7],
+                   help="HMM state counts to plot  (default: 7)")
     p.add_argument("--output_dir", default="figures")
     p.add_argument("--hmm_dir",  default="data/hmm_hmm/6way",
                    help="Contains hmm_scores.npz and final_decode_k*.npz")
@@ -210,6 +210,26 @@ def date_to_mpl(dt64):
 # ═════════════════════════════════════════════════════════════════════════════
 # GLOBAL FIGURES
 # ═════════════════════════════════════════════════════════════════════════════
+
+def _plot_perm_null(null, obs, p_one, output_path, *, title, xlabel, dpi):
+    """Standard permutation-null histogram (null + observed line + 95th pct).
+    Matches plot_indicator_null / plot_jsd_stability_null styling."""
+    pct95 = float(np.percentile(null, 95))
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.hist(null, bins=60, color="#94A3B8", edgecolor="white",
+            lw=0.3, alpha=0.85, label="Permutation null")
+    ax.axvline(obs, color="#DC2626", lw=2.5,
+               label=f"Observed = {obs:+.4f}  (p = {p_one:.4f})")
+    ax.axvline(pct95, color="black", lw=1.2, ls="--", alpha=0.7,
+               label=f"Null 95th percentile = {pct95:.4f}")
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel("Permutation Count")
+    ax.set_title(title)
+    ax.legend(fontsize=9, framealpha=0.85)
+    ax.grid(True, alpha=0.3, ls="--")
+    ax.spines[["top", "right"]].set_visible(False)
+    fig.tight_layout()
+    savefig(fig, output_path, dpi=dpi)
 
 # ── 1. Window distributions ───────────────────────────────────────────────────
 
@@ -455,39 +475,59 @@ def figure_pca_sanity(pca_npz, out_dir, dpi):
     seed_to_idx = {s: i for i, s in enumerate(unique_seeds)}
     cmap_win = plt.cm.viridis
 
-    def _scatter(Z, title, out_path, xlabel="PC1", ylabel="PC2"):
-        fig, ax = plt.subplots(figsize=(10, 7))
+    def _scatter(Z, title, out_path, pc1_label="PC1", pc2_label="PC2"):
+        fig, ax = plt.subplots(figsize=(6, 4))
         for i in range(len(window_ids)):
             c = cmap_win(win_to_idx[window_ids[i]] / max(n_wins - 1, 1))
             m = MARKERS[seed_to_idx[seed_ids[i]] % len(MARKERS)]
-            ax.scatter(Z[i, 0], Z[i, 1], color=c, marker=m, s=25, alpha=0.6)
+            ax.scatter(Z[i, 0], Z[i, 1], color=c, marker=m, s=18, alpha=0.6)
+
         sm = plt.cm.ScalarMappable(cmap=cmap_win,
                                    norm=plt.Normalize(0, max(n_wins - 1, 1)))
         sm.set_array([])
-        plt.colorbar(sm, ax=ax, label="Window index")
-        ax.set_xlabel(xlabel, fontsize=12)
-        ax.set_ylabel(ylabel, fontsize=12)
-        ax.set_title(title, fontsize=12)
+        cbar = fig.colorbar(sm, ax=ax, label="Window index", pad=0.02)
+        cbar.ax.yaxis.labelpad = 8
+
+        ax.set_xlabel(pc1_label, fontsize=16)
+        ax.set_ylabel(pc2_label, fontsize=16)
+        ax.set_title(title, fontsize=18)
+        ax.tick_params(axis='both', labelsize=14)
+        cbar.ax.tick_params(labelsize=14)
+        cbar.set_label("Window index", fontsize=14)
+
         legend_els = [
             mlines.Line2D([], [], color="grey",
                           marker=MARKERS[seed_to_idx[s] % len(MARKERS)],
-                          linestyle="None", markersize=7, alpha=0.8, label=f"seed {s}")
+                          linestyle="None", markersize=7, alpha=0.8, label=f"{s}")
             for s in unique_seeds[:min(len(unique_seeds), 10)]
         ]
-        ax.legend(handles=legend_els, fontsize=7, ncol=2,
-                  loc="upper right", framealpha=0.7)
+        ax.legend(handles=legend_els, fontsize=12, ncol=1,
+                  loc="upper left", bbox_to_anchor=(1.32, 1.0),
+                  framealpha=0.7, title="Seed", title_fontsize=14)
         fig.tight_layout()
         savefig(fig, out_path, dpi=dpi)
 
-    # Before alignment: raw Z_scaled (first two components)
-    _scatter(Z_scaled, "PCA — PC1 vs PC2 (z-scored, aligned)",
-             os.path.join(out_dir, "pca_sanity_after.png"))
+    # After alignment: Z_scaled with variance labels from evr
+    pc1_var = evr[0] * 100 if len(evr) > 0 else 0
+    pc2_var = evr[1] * 100 if len(evr) > 1 else 0
+    _scatter(
+        Z_scaled,
+        "Principal Component Analysis of\nAligned Representations (Post-Alignment)",
+        os.path.join(out_dir, "pca_sanity_after.png"),
+        pc1_label=f"PC1 ({pc1_var:.1f}% var)",
+        pc2_label=f"PC2 ({pc2_var:.1f}% var)",
+    )
 
-    # Unaligned weights if available
-    if "Z_unaligned" in d:
-        Z_un = d["Z_unaligned"].astype(np.float32)
-        _scatter(Z_un, "PCA — PC1 vs PC2 (UNALIGNED weights)",
-                 os.path.join(out_dir, "pca_sanity_before.png"))
+    # Before alignment: unaligned weights if available
+    if "Z_before_scaled" in d:
+        Z_un = d["Z_before_scaled"].astype(np.float32)
+        _scatter(
+            Z_un,
+            "Principal Component Analysis\nof Raw Representations (Pre-Alignment)",
+            os.path.join(out_dir, "pca_sanity_before.png"),
+            pc1_label="PC1 (unaligned)",
+            pc2_label="PC2 (unaligned)",
+        )
 
     # Scree / component-selection plot
     n_components = len(evr)
@@ -700,6 +740,36 @@ def figure_partial_jsd(k, partial_jsd_dir, k_out, dpi):
     plot_indicator_null(
         d["fl_null"], float(d["fl_obs"]), float(d["fl_p_one"]),
         os.path.join(k_out, "partial_jsd_indicator_null.png"))
+    
+    # ── Plot 3: two-stage residual null (free label shuffle) ──────────────
+    if "resid_free_null" in d.files:
+        free_null = d["resid_free_null"]
+        free_obs  = float(d["resid_free_obs"])
+        free_p    = float((free_null >= free_obs).mean())
+        _plot_perm_null(
+            free_null, free_obs, free_p,
+            os.path.join(k_out, "partial_jsd_residual_free_null.png"),
+            title="Two-Stage Residual Test: Within- vs. Across-State\n"
+                  "(Free Label Shuffle, JSD and Lag Removed)",
+            xlabel="Within \u2212 Across Mean F1 Residual",
+            dpi=dpi)
+    else:
+        print("    [skip] partial_jsd_residual_free_null — key not in npz")
+
+    # ── Plot 4: two-stage residual null (lag-stratified, harmonic-weighted) ─
+    if "resid_lag_null" in d.files:
+        lag_null = d["resid_lag_null"]
+        lag_obs  = float(d["resid_lag_obs"])
+        lag_p    = float((lag_null >= lag_obs).mean())
+        _plot_perm_null(
+            lag_null, lag_obs, lag_p,
+            os.path.join(k_out, "partial_jsd_residual_lagstratified_null.png"),
+            title="Two-Stage Residual Test: Distance-Conditioned\n"
+                  "(Lag-Stratified Shuffle, JSD and Lag Removed)",
+            xlabel="Distance-Conditioned Within \u2212 Across F1 Residual Gap",
+            dpi=dpi)
+    else:
+        print("    [skip] partial_jsd_residual_lagstratified_null — key not in npz")
 
 # ═════════════════════════════════════════════════════════════════════════════
 # PER-K HELPER FIGURES
@@ -890,7 +960,6 @@ def _timeline_with_classes(dec, manifest_path, k, out_path, dpi):
     N         = len(window_ids)
     runs      = contiguous_runs(state_seq)
 
-    # ── Chronological state relabelling ─────────────────────────────────────
     seen_order = {}
     for state, _, _ in runs:
         if state not in seen_order:
@@ -899,23 +968,20 @@ def _timeline_with_classes(dec, manifest_path, k, out_path, dpi):
     def chron_label(state):
         return seen_order[state]
 
-    # ── Estimate window width to avoid clipping the last state ──────────────
-    # Use the median gap between consecutive window start dates.
     mpl_starts = [date_to_mpl(s) for s in starts]
     if N > 1:
         gaps = [mpl_starts[i + 1] - mpl_starts[i] for i in range(min(N - 1, 20))]
         window_width = float(np.median(gaps))
     else:
-        window_width = 60.0  # fallback: 60 days in matplotlib date units
+        window_width = 60.0
 
     def run_right(e_idx):
-        """Right edge of a run in matplotlib date units."""
         if e_idx + 1 < N:
             return mpl_starts[e_idx + 1]
-        return mpl_starts[-1] + window_width  # extend last run by one window
+        return mpl_starts[-1] + window_width
 
     fig, (ax_bar, ax_stack) = plt.subplots(
-        2, 1, figsize=(8, 5),
+        2, 1, figsize=(10, 5),
         gridspec_kw={"height_ratios": [1, 9]},
         sharex=False,
     )
@@ -929,19 +995,18 @@ def _timeline_with_classes(dec, manifest_path, k, out_path, dpi):
                     color=plt.cm.tab10.colors[label % 10], alpha=0.9, linewidth=0)
         mid = (left + right) / 2
         ax_bar.text(mid, 0, f"{label}", ha="center", va="center",
-                    fontsize=8, fontweight="bold", color="white")
+                    fontsize=12, fontweight="bold", color="white")  # ↑ 8→10
     ax_bar.set_yticks([]); ax_bar.set_xticks([])
     ax_bar.set_title(
         f"HMM Latent State Sequence and Six-Class Composition ($K={k}$)",
-        fontsize=12,
+        fontsize=16,  # ↑ 12→14
     )
     ax_bar.set_xlim(mpl_starts[0], mpl_starts[-1] + window_width)
     ax_bar.set_ylim(-0.6, 0.6)
 
-        # ── Bottom panel: stacked class proportions ──────────────────────────────
+    # ── Bottom panel: stacked class proportions ──────────────────────────────
     x_dates = [mdates.date2num(s.to_pydatetime()) for s in starts]
 
-    # Extend by one synthetic point so fill_between covers the last window
     x_dates_ext = x_dates + [x_dates[-1] + window_width]
     props_ext   = np.vstack([props_arr, props_arr[-1:]])
 
@@ -962,29 +1027,35 @@ def _timeline_with_classes(dec, manifest_path, k, out_path, dpi):
 
     ax_stack.set_xlim(x_dates_ext[0], x_dates_ext[-1])
     ax_stack.set_ylim(0, 1)
-    ax_stack.set_ylabel("Class Proportion", fontsize=11)
-    ax_stack.set_xlabel("Date", fontsize=11)
+    ax_stack.set_ylabel("Class Proportion", fontsize=14)  # ↑ 11→13
+    ax_stack.set_xlabel("Date", fontsize=14)              # ↑ 11→13
     ax_stack.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
     ax_stack.xaxis.set_major_locator(mdates.MonthLocator(interval=6))
-    plt.setp(ax_stack.xaxis.get_majorticklabels(), rotation=35, ha="right", fontsize=8)
+    plt.setp(ax_stack.xaxis.get_majorticklabels(), rotation=35, ha="right", fontsize=12)  # ↑ 8→10
+
     ax_stack.grid(True, axis="y", alpha=0.25, linestyle="--")
     ax_stack.spines[["top", "right"]].set_visible(False)
 
     class_patches = [mpatches.Patch(color=CLASS_COLORS[ci], label=CLASS_NAMES[ci])
                      for ci in order]
-    ax_stack.legend(handles=class_patches, loc="upper left",
-                    bbox_to_anchor=(0.0, -0.22), fontsize=8, ncol=3, framealpha=0.85)
+    ax_stack.legend(
+        handles=class_patches,
+        loc="upper right",
+        bbox_to_anchor=(-0.12, 1.0),  # left of the plot, top-aligned
+        fontsize=11,                   # ↑ 8→10
+        ncol=1,                        # vertical list
+        framealpha=0.85,
+    )
 
     fig.tight_layout()
     savefig(fig, out_path, dpi=dpi)
-
 
 def _f1_vs_distance(summary_df, out_path, dpi):
     df = summary_df[summary_df["distance"] != "pooled"].copy()
     df["distance"] = df["distance"].astype(int)
     df = df.sort_values("distance")
 
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(7, 3))
     for kind, color, label in [
         ("within", COLORS_WA["within"], "Within-state"),
         ("across", COLORS_WA["across"], "Across-state"),
@@ -998,7 +1069,7 @@ def _f1_vs_distance(summary_df, out_path, dpi):
 
     ax.set_xlabel("Temporal Distance |i − j| (windows)", fontsize=12)
     ax.set_ylabel("Macro F1", fontsize=12)
-    ax.set_title("Cross-Window F1 vs. Temporal Distance\nSplit by HMM State Membership",
+    ax.set_title("Cross-Window F1 vs. Temporal Distance Split by HMM State Membership",
                  fontsize=13)
     ax.legend(fontsize=11); ax.grid(True, alpha=0.3, ls="--")
     fig.tight_layout()
@@ -1081,12 +1152,15 @@ def _f1_heatmap_with_states(f1_matrix, valid_ids_f1, state_seq, window_ids_dec,
     plot_mat = f1_matrix.copy().astype(float)
     np.fill_diagonal(plot_mat, np.nan)
 
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(6, 4))
 
     im = ax.imshow(plot_mat, aspect="auto", cmap="RdYlGn",
                    vmin=np.nanmin(plot_mat), vmax=np.nanmax(plot_mat),
                    extent=[-0.5, N - 0.5, N - 0.5, -0.5])
-    plt.colorbar(im, ax=ax, label="Macro F1", fraction=0.035, pad=0.02)
+
+    cbar = plt.colorbar(im, ax=ax, fraction=0.035, pad=0.02)
+    cbar.ax.tick_params(labelsize=13)
+    cbar.set_label("Macro F1", fontsize=14)
 
     boundaries = [i - 0.5 for i in range(1, N)
                   if states_valid[i] != states_valid[i - 1]
@@ -1101,9 +1175,9 @@ def _f1_heatmap_with_states(f1_matrix, valid_ids_f1, state_seq, window_ids_dec,
 
     ax.set_xticks([])
     ax.set_yticks([])
-    ax.set_xlabel("Test Window", fontsize=11)
-    ax.set_ylabel("Train Window", fontsize=11)
-    ax.set_title("Cross-Window Macro F1", fontsize=12)
+    ax.set_xlabel("Test Window", fontsize=14)
+    ax.set_ylabel("Train Window", fontsize=14)
+    ax.set_title("Cross-Window Macro F1", fontsize=16)
 
     fig.tight_layout()
     savefig(fig, out_path, dpi=dpi)
@@ -1348,7 +1422,7 @@ def _corr_scatter(x, y, state_i, k, xlabel, ylabel, title,
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
 
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(6, 5))
 
     # OLS trend line — stats ride along in its legend label
     mask = ~(np.isnan(x) | np.isnan(y))
@@ -1366,8 +1440,7 @@ def _corr_scatter(x, y, state_i, k, xlabel, ylabel, title,
 
     handles = []
     if ols_line is not None:
-        ols_line.set_label("Least squares" if stat_txt is None
-                           else f"Least squares ({stat_txt})")
+        ols_line.set_label("OLS")
         handles.append(ols_line)
     elif stat_txt is not None:
         handles.append(mlines.Line2D([], [], color="none", label=stat_txt))
@@ -1381,17 +1454,18 @@ def _corr_scatter(x, y, state_i, k, xlabel, ylabel, title,
     state_handles = [
         mlines.Line2D([], [], marker="o", color="white",
                       markerfacecolor=STATE_PALETTE[s % len(STATE_PALETTE)],
-                      markeredgecolor="white", markersize=8, label=f"State {s}")
+                      markeredgecolor="white", markersize=8, label=f"S{s}")
         for s in range(k)
     ]
     leg = ax.legend(handles=handles + state_handles, title="Train state",
-                    fontsize=12, title_fontsize=12, loc="upper right",
+                    fontsize=13, title_fontsize=13, loc="upper right",
                     framealpha=0.92, ncol=1 if k <= 4 else 2)
     leg._legend_box.align = "left"
 
-    ax.set_xlabel(xlabel, fontsize=14)
-    ax.set_ylabel(ylabel, fontsize=14)
-    ax.set_title(title, fontsize=16, pad=10)
+    ax.set_xlabel(xlabel, fontsize=15)
+    ax.set_ylabel(ylabel, fontsize=15)
+    ax.set_title(title, fontsize=17, pad=10)
+    ax.tick_params(axis="both", which="major", labelsize=13)
     ax.grid(True, alpha=0.25, ls="--", lw=0.6)
     ax.spines[["top", "right"]].set_visible(False)
     fig.tight_layout()
