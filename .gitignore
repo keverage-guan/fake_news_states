@@ -7,6 +7,7 @@ data/embeddings/
 data/images/
 data/hmm_weights/2way/pca_model.pkl
 data/hmm_weights/6way/pca_model.pkl
+data/yelp_sentiment.jsonl
 data/splits/*
 !data/splits/hmm_windows/
 !data/splits/hmm_windows/**
